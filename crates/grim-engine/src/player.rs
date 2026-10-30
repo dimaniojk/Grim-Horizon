@@ -853,6 +853,9 @@ impl Default for Movement {
 
 /// `getMovementThreshold` for 1.18.2+ clients.
 pub const MOVEMENT_THRESHOLD: f64 = 0.0002;
+/// How far above a surface a client can stop and stand: Entity.move does
+/// not apply a collided movement shorter than sqrt(1e-7).
+pub const HOVER_GAP: f64 = 3.1623e-4;
 
 impl Movement {
     pub fn position(&self) -> Vec3 {

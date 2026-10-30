@@ -82,28 +82,40 @@ Nothing in this repository has run against a live server yet: it needs game
 files only you can provide, and a EULA only you can accept. These are the
 exact steps (all on your own machine; nothing touches your worlds).
 
-1. **Minecraft 26.3, from the official launcher.** Install Minecraft Java
-   Edition with the official launcher (https://www.minecraft.net/download),
-   sign in with the Microsoft account that owns the game, select release
-   26.3 and play it once, so the launcher keeps its files in
-   `~/Library/Application Support/minecraft` (macOS) or `~/.minecraft`.
-2. **The 26.3 server jar.** In the launcher's
-   `versions/26.3/26.3.json`, `downloads.server.url` is Mojang's official
-   download for it. Save it anywhere.
-3. **A Java 25 runtime** (`java -version`; Temurin 25 is already on this Mac).
-4. **Prepare Horizon's game files** from your copy (Horizon's `docs/hosting.md`,
-   step 2), with the `horizon-prepare` of Horizon's pinned commit:
+1. **Minecraft 26.3, from the official launcher.** Install the official
+   Minecraft Launcher (https://www.minecraft.net/download), sign in with the
+   Microsoft account that owns Minecraft: Java Edition, select release 26.3
+   and press Play once. (A Feather or other third-party profile does not
+   count: Horizon needs the official 26.3 files.) Check:
 
    ```sh
-   (cd ../upstream/horizon && cargo run --release -p horizon-prepare -- \
-       --prepare --server-jar /path/to/server.jar)
-   # -> ../upstream/horizon/.local/horizon-client/26.3
+   ls ~/Library/Application\ Support/minecraft/versions/26.3
+   # 26.3.jar  26.3.json
+   ```
+
+2. **The 26.3 server jar**, from the official URL in that version's file:
+
+   ```sh
+   URL=$(python3 -c "import json,os; print(json.load(open(os.path.expanduser('~/Library/Application Support/minecraft/versions/26.3/26.3.json')))['downloads']['server']['url'])")
+   curl -fL -o ~/Downloads/server-26.3.jar "$URL"
+   ```
+
+3. **Java 25** (`java -version`; Temurin 25 is on this Mac).
+4. **Prepare Horizon's game files** with the `horizon-prepare` of Horizon's
+   pinned commit (Horizon's `docs/hosting.md`, step 2):
+
+   ```sh
+   cd ../upstream/horizon
+   cargo run --release -p horizon-prepare -- --prepare --server-jar ~/Downloads/server-26.3.jar
+   # -> ../upstream/horizon/.local/horizon-client/26.3 (must contain items.json)
+   cd -
    ```
 
    Add `--minecraft-dir PATH` if your launcher keeps the game elsewhere.
 5. **Build the server** (section 3) and the test player:
 
    ```sh
+   python3 tools/build_server.py --horizon ../upstream/horizon --mixins ../upstream/horizon-mixins
    cargo build --release --offline --manifest-path tools/grim-bot/Cargo.toml
    ```
 

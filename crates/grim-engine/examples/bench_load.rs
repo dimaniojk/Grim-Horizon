@@ -105,6 +105,13 @@ fn run(players: u32, ticks: u32, s: Stress) -> Row {
     world.min_y = -64;
     world.max_y = 320;
     world.floor(-120, 120, 63, -120, 120, BlockFacts::SOLID);
+    let stone_id = world.add_state(
+        BlockFacts::SOLID,
+        &[grim_horizon_engine::math::Aabb::new(
+            0.0, 0.0, 0.0, 1.0, 1.0, 1.0,
+        )],
+    );
+    let air_id = world.add_state(BlockFacts::AIR, &[]);
     let mut engine = Engine::new(Config::default());
     let mut rng = Rng(42);
     let mut now = 1_000_000_000u64;
@@ -162,12 +169,16 @@ fn run(players: u32, ticks: u32, s: Stress) -> Row {
             }
         }
         if s.beside_every > 0 && t % s.beside_every == 0 {
+            // A redstone clock beside each player's home: stone, then air.
+            let state = if (t / s.beside_every).is_multiple_of(2) {
+                stone_id
+            } else {
+                air_id
+            };
             for p in &list {
-                let c = p.client.pos;
-                engine.on_outgoing(
-                    p.key,
-                    Clientbound::BlockChanged([c.x.floor() as i32 + 2, 64, c.z.floor() as i32]),
-                );
+                let c = [p.home.x.floor() as i32 + 2, 64, p.home.z.floor() as i32];
+                world.set_state(c[0], c[1], c[2], state);
+                engine.on_outgoing(p.key, Clientbound::BlockState(c, state));
             }
         }
         engine_ns += start.elapsed().as_nanos();
@@ -298,9 +309,9 @@ fn main() {
         "Engine work per server tick (ms), 1,200 ticks, vanilla-model players walking, jumping, sprinting, sneaking"
     );
     println!(
-        "| scenario | players | avg | p95 | p99 | heap/player | legit alerts | not judged (blocks / world) | longest unjudged run | peak pending | spilled / overflowed |"
+        "| scenario | players | avg | p95 | p99 | heap/player | legit alerts | not judged (blocks / world) | judged in block variants | longest unjudged run | peak pending | spilled / overflowed |"
     );
-    println!("|---|---|---|---|---|---|---|---|---|---|---|");
+    println!("|---|---|---|---|---|---|---|---|---|---|---|---|");
     let walk = Stress::default();
     let cases: Vec<(&str, u32, Stress)> = vec![
         ("walking", 10, walk),
@@ -355,7 +366,7 @@ fn main() {
         let r = run(players, 1200, s);
         let st = r.stats;
         println!(
-            "| {name} | {players} | {:.3} | {:.3} | {:.3} | {:.1} KB | {} | {} / {} | {} | {} | {} / {} |",
+            "| {name} | {players} | {:.3} | {:.3} | {:.3} | {:.1} KB | {} | {} / {} | {} | {} | {} | {} / {} |",
             r.avg,
             r.p95,
             r.p99,
@@ -363,6 +374,7 @@ fn main() {
             r.flags,
             st.skipped_unconfirmed_blocks,
             st.skipped_unknown_world,
+            st.judged_with_variants,
             st.longest_unjudged,
             st.peak_pending,
             st.block_spills,

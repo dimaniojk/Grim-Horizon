@@ -20,7 +20,9 @@ use crate::fluid;
 use crate::math::{
     Aabb, COLLISION_EPSILON, Vec3, cut_box_to_vector, floor, grim_equal, mc_cos, mc_sin, radians,
 };
-use crate::player::{Attr, Effect, KnownInput, MOVEMENT_THRESHOLD, Movement, Pose, VectorData, vt};
+use crate::player::{
+    Attr, Effect, HOVER_GAP, KnownInput, MOVEMENT_THRESHOLD, Movement, Pose, VectorData, vt,
+};
 use crate::velocity::{ExplosionHandler, KnockbackHandler, VelocityConfig};
 use crate::world::{BlockKind, BlockView};
 
@@ -317,19 +319,23 @@ fn update_hidden_box(p: &mut Movement, friction: f64) {
         return;
     }
     let u = &p.uncertainty;
-    let mut b = p.sneaking_hidden;
+    let prev = p.sneaking_hidden;
+    let mut b = prev;
     for d in &p.last_possible {
         if d.is_jump() == p.predicted.is_jump()
             && d.is_knockback() == p.predicted.is_knockback()
             && d.is_explosion() == p.predicted.is_explosion()
         {
+            // The hidden velocity also took this tick's input (Grim keeps only
+            // the larger of the two, which falls behind on ice, where friction
+            // keeps it above Grim's 0.15 floor for many ticks).
             if u.last_stuck_west.has_occurred_since(0) || u.last_stuck_north.has_occurred_since(0) {
-                b.min_x = b.min_x.min(d.vector.x);
-                b.min_z = b.min_z.min(d.vector.z);
+                b.min_x = b.min_x.min(d.vector.x).min(prev.min_x + d.vector.x);
+                b.min_z = b.min_z.min(d.vector.z).min(prev.min_z + d.vector.z);
             }
             if u.last_stuck_east.has_occurred_since(0) || u.last_stuck_south.has_occurred_since(0) {
-                b.max_x = b.max_x.max(d.vector.x);
-                b.max_z = b.max_z.max(d.vector.z);
+                b.max_x = b.max_x.max(d.vector.x).max(prev.max_x + d.vector.x);
+                b.max_z = b.max_z.max(d.vector.z).max(prev.max_z + d.vector.z);
             }
         }
     }
@@ -815,6 +821,19 @@ fn tick_move(p: &mut Movement, cx: &mut Context<'_>, input_vel: Vec3, collide: V
     let mut calculated_on_ground = p.vertical_collision && input_vel.y < 0.0;
     if input_vel.y == -COLLISION_EPSILON && collide.y > -COLLISION_EPSILON && collide.y <= 0.0 {
         calculated_on_ground = p.on_ground;
+    }
+    // Entity.move does not apply a collided movement under sqrt(1e-7): a
+    // client sinking onto a surface can stop that far above it, on the
+    // ground. Too close to call as well: let the client decide there.
+    if !calculated_on_ground
+        && p.on_ground
+        && input_vel.y <= 0.0
+        && !collisions::is_empty(
+            cx.world,
+            p.pose_box_at(p.x, p.y, p.z).offset(0.0, -HOVER_GAP, 0.0),
+        )
+    {
+        calculated_on_ground = true;
     }
     p.client_claims_last_on_ground = p.on_ground;
     if !p.exempt_on_ground() {
@@ -1592,14 +1611,14 @@ fn do_predictions(
 
         let (mut test_primary, mut output, mut real_primary) =
             seek_wall_collisions(p, cx, primary, original_client_vel, d);
-        let mut accuracy = output.distance_squared(p.actual_movement);
+        let mut accuracy = applied(test_primary, output).distance_squared(p.actual_movement);
         // Grim moves 0.03 candidates with a 0.6 x 0.6 box because the pose is
         // unknown after ticks without a position; the real pose is just as
         // possible (it stops at a ledge the small box slips under).
         if d.is_zero_point_zero_three() && original_bb != point_three_box {
             p.bounding_box = original_bb;
             let (t, o, r) = seek_wall_collisions(p, cx, primary, original_client_vel, d);
-            let a = o.distance_squared(p.actual_movement);
+            let a = applied(t, o).distance_squared(p.actual_movement);
             if a < accuracy {
                 (test_primary, output, real_primary, accuracy) = (t, o, r, a);
             }
@@ -1635,10 +1654,26 @@ fn do_predictions(
             best = Some(picked);
             before_collision = test_primary;
             real_before_collision = real_primary;
-            p.hidden_cut_from = (p.sneaking_hidden != Aabb::default()
+            let cut = |raw: f64, cut: f64| raw != cut;
+            let flush = |cut: f64, test: f64, out: f64| cut != 0.0 && test != out;
+            p.hidden_cut_from = if (p.sneaking_hidden != Aabb::default()
                 || p.uncertainty.stuck_on_edge.has_occurred_since(0))
-            .then_some(d.vector)
-            .filter(|v| real_primary.x != v.x || real_primary.z != v.z);
+                && (cut(d.vector.x, real_primary.x) || cut(d.vector.z, real_primary.z))
+            {
+                Some(d.vector)
+            } else if (cut(d.vector.x, real_primary.x)
+                && flush(real_primary.x, test_primary.x, output.x))
+                || (cut(d.vector.z, real_primary.z)
+                    && flush(real_primary.z, test_primary.z, output.z))
+            {
+                // Uncertainty cut the movement to exactly where a wall stops
+                // it: the client either moved just that far (keeping that
+                // velocity) or further and hit the wall (losing it). Grim
+                // takes the first; carry both for a tick.
+                Some(real_primary)
+            } else {
+                None
+            };
             if p.would_collision_result_flag_ground_spoof(test_primary.y, output.y) {
                 accuracy += 0.0001 * 0.0001;
             }
@@ -1661,6 +1696,18 @@ fn do_predictions(
         p.skipped_tick_in_actual_movement = true;
     }
     before_collision
+}
+
+/// Entity.move: a collided movement below 1e-7 (squared) that lost more than
+/// that to the collision is not applied at all. Candidates are ranked by
+/// where they leave the player, as the client would be left.
+fn applied(movement: Vec3, collided: Vec3) -> Vec3 {
+    let d = collided.length_squared();
+    if d <= 1e-7 && movement.length_squared() - d >= 1e-7 {
+        Vec3::ZERO
+    } else {
+        collided
+    }
 }
 
 fn seek_wall_collisions(
@@ -1696,6 +1743,11 @@ fn seek_wall_collisions(
     if test.y == out.y {
         test.y -= y_add;
         out.y -= y_add;
+    } else if primary.y != 0.0 && out.y == primary.y && primary.y == d.vector.y {
+        // The movement (not cut by any uncertainty) ends exactly on the
+        // surface: vanilla's collide returns it unchanged, so no vertical
+        // collision and no ground.
+        test.y = primary.y;
     }
     if test.z == out.z {
         test.z -= z_add;

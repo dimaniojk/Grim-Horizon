@@ -60,24 +60,54 @@ Timer check's clock and the reach window.
 ### World compensation
 
 Grim keeps a full client-side copy of every chunk. This port reads Horizon's
-authoritative world and compensates instead:
+authoritative world and tracks what the client may still see instead:
 
-* every block the server changes is recorded with the transaction that
-  follows it; until the client answers that transaction, predictions whose
-  movement touches the block are **not judged** (the client may see the old or
-  the new state);
-* the player's own digs and placements are uncertain until the next
-  transaction;
-* chunks count as loaded only when the server has them *and* has sent them to
-  the player (`Guest::sent_chunks`); movement in other chunks is not judged.
+* every block change the server sends carries its block state (BlockUpdate,
+  SectionBlocksUpdate); `BlockView::state_shape` describes any state (facts,
+  fluid, collision boxes) from Horizon's registry and shape cache;
+* per nearby position (16 blocks) the engine keeps the state the client
+  settled in and each change not yet confirmed by a transaction; a client
+  answers a transaction only after applying everything sent before it, so
+  what it may show is the changes up to some transaction: one world per
+  unanswered transaction (`world::Around::Worlds`), never one per combination
+  of cells;
+* a move near unconfirmed changes is predicted in each of those worlds
+  (physically equal ones once, at most 16) through `world::Overlay`, and
+  passes if any explains it;
+* the player's own digs and places: the client shows the block as it was (the
+  server's state, `BlockView::state_at`) or its own guess until the server
+  answers with the cell's state, which then stands for the guess; counted only
+  within 8 blocks and 12 a second, so packet spam cannot hide moves;
+* not judged only when a state is not known (a cell's first change, shapes
+  that depend on context, changes far away when a teleport brings the player
+  there), when more than 16 worlds would be needed (a round trip over ~800 ms
+  with a block changing beside the player every tick), or in chunks the
+  player has not been sent. All of it is counted in `grim stats`, and a run
+  of 200 unjudged moves is logged.
 
-Pending changes are kept by position up to 4,096 per player, then by
-16x16x16 section up to 1,024, and only then as "every block unknown"; all of
-them until the client confirms. A change the send hook could not record (its
-outbox past 65,536 entries a tick) makes its section unknown
-(`Clientbound::BlocksUnknownIn`); teleports, pings and the other packets the
-engine needs are never dropped. `grim stats` counts every move not judged and
-why, and the engine logs a player left unjudged for 200 moves in a row.
+Far-away or stateless changes are kept as "unknown until transaction N" (16
+bytes each); positions past 4,096 per player fall back to their 16x16x16
+section, sections past 1,024 to "everything unknown", all until confirmed. A
+change the send hook could not record (outbox past 65,536 a tick) makes its
+section unknown; teleports and pings are never dropped.
+
+### Crash handling
+
+Every Horizon hook runs under `catch_unwind` (Horizon's profiles unwind);
+`recovery.rs` decides what follows, and nothing resumes on state a panic may
+have left half-updated:
+
+* a panic while checking one player's packets: that player's state is already
+  out of the engine (it is held outside the map while it works); the adapter
+  forgets the connection, kicks the player ("please reconnect": a rejoin
+  resends position, attributes and effects) and tells online staff. Nobody
+  else's checks change, so a player who finds such a bug only disconnects
+  themself;
+* a panic in a hook shared by everyone: the engine is rebuilt from the config,
+  players online stay unchecked until they rejoin (their state would be
+  incomplete), staff are told;
+* three shared failures within ten minutes: the anti-cheat turns off, staff
+  are reminded every minute, `grim` on the console says so.
 
 ### The Horizon side, packet by packet
 

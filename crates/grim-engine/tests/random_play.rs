@@ -252,6 +252,26 @@ fn former_false_positive_seeds_are_clean() {
             287,
             "a tick with only a rotation packet did not advance state",
         ),
+        (
+            415,
+            "swimming down exactly flush onto the floor: no collision",
+        ),
+        (
+            536,
+            "sinking in water, stopped 5e-5 above the floor by Entity.move",
+        ),
+        (
+            651,
+            "sneak-held velocity on ice kept gaining input while hidden",
+        ),
+        (
+            1380,
+            "ground claimed without a position while hovering 3e-4 up",
+        ),
+        (
+            1258,
+            "uncertainty cut a move to flush with a wall the client hit",
+        ),
     ] {
         let h = play(seed, 6000);
         assert!(

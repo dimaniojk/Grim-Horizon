@@ -5,7 +5,8 @@ mod common;
 
 use common::{Harness, KEY, Keys, flat_world, stone};
 use grim_horizon_engine::engine::Clientbound;
-use grim_horizon_engine::math::Vec3;
+use grim_horizon_engine::math::{Aabb, Vec3};
+use grim_horizon_engine::world::BlockFacts;
 use grim_horizon_engine::{Action, CheckId};
 
 const SPAWN: Vec3 = Vec3::new(0.5, 64.0, 0.5);
@@ -15,6 +16,96 @@ fn logs(h: &Harness, text: &str) -> usize {
         .iter()
         .filter(|a| matches!(a, Action::Log(l) if l.contains(text)))
         .count()
+}
+
+/// States a test world can switch a block between: (stone, air).
+fn states(h: &mut Harness) -> (u32, u32) {
+    let full = Aabb::new(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+    (
+        h.world.add_state(stone(), &[full]),
+        h.world.add_state(BlockFacts::AIR, &[]),
+    )
+}
+
+/// The server sets a block and sends it, as Horizon's BlockUpdate does.
+fn set(h: &mut Harness, pos: [i32; 3], state: u32) {
+    h.world.set_state(pos[0], pos[1], pos[2], state);
+    h.engine
+        .on_outgoing(KEY, Clientbound::BlockState(pos, state));
+}
+
+#[test]
+fn a_redstone_clock_beside_a_player_no_longer_hides_cheats() {
+    let mut h = Harness::new(flat_world(stone()), SPAWN);
+    let (stone_state, air) = states(&mut h);
+    let clock = [1, 64, 0];
+    let toggle = |h: &mut Harness, t: u32| {
+        set(
+            h,
+            clock,
+            if (t / 2).is_multiple_of(2) {
+                stone_state
+            } else {
+                air
+            },
+        )
+    };
+    // Legitimate: jumping in place beside the clock for 10 seconds.
+    for t in 0..200 {
+        toggle(&mut h, t);
+        h.tick(Keys {
+            jump: true,
+            ..Keys::default()
+        });
+    }
+    assert!(h.flags.is_empty(), "{:?}", h.flags);
+    let s = h.engine.stats;
+    assert!(s.judged_with_variants > 50, "{s:?}");
+    // Only the very first change (whose old state is unknown) went unjudged.
+    assert!(s.skipped_unconfirmed_blocks <= 3, "{s:?}");
+    // A fly hack beside the clock is caught.
+    for t in 200..230 {
+        toggle(&mut h, t);
+        h.client_tick(Keys::default(), |c| c.pos.y += 0.2);
+    }
+    assert!(
+        h.flagged(CheckId::Simulation) > 0,
+        "the clock hid a fly hack"
+    );
+}
+
+#[test]
+fn a_lagging_client_on_a_removed_floor_is_judged_and_clean() {
+    let mut w = flat_world(stone());
+    w.floor(-64, 64, 62, -64, 64, stone());
+    let mut h = Harness::new(w, SPAWN);
+    let (stone_state, air) = states(&mut h);
+    let under = [0, 63, 0];
+    // The block was sent once and settled: its state is known.
+    set(&mut h, under, stone_state);
+    for _ in 0..5 {
+        h.tick(Keys::default());
+    }
+    // The server removes it; the client gets that 4 ticks later and answers
+    // the transaction behind it 2 ticks after that (a 300 ms round trip).
+    h.latency_ticks = 6;
+    h.client_world = Some(h.world.clone());
+    set(&mut h, under, air);
+    let skipped = h.engine.stats.skipped_unconfirmed_blocks;
+    for _ in 0..4 {
+        h.client_tick(Keys::default(), |c| c.position_reminder = 19);
+    }
+    // Now it does, and falls onto the block below.
+    h.client_world = None;
+    for _ in 0..20 {
+        h.tick(Keys::default());
+    }
+    assert!(h.client.pos.y < 63.1, "did not fall: {:?}", h.client.pos);
+    assert!(h.flags.is_empty(), "{:?}", h.flags);
+    assert_eq!(
+        h.engine.stats.skipped_unconfirmed_blocks, skipped,
+        "judged, not skipped"
+    );
 }
 
 #[test]

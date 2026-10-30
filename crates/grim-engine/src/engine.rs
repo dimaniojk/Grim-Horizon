@@ -14,10 +14,12 @@ use crate::collisions;
 use crate::config::Config;
 use crate::entities::EntityHistory;
 use crate::math::{Aabb, Vec3, look_vector, wrap_degrees};
-use crate::player::{Attr, Effect, GameMode, KnownInput, MOVEMENT_THRESHOLD, Modifier, Movement};
+use crate::player::{
+    Attr, Effect, GameMode, HOVER_GAP, KnownInput, MOVEMENT_THRESHOLD, Modifier, Movement,
+};
 use crate::prediction::{self, Context, PositionUpdate, PredictionComplete};
 use crate::velocity::{ExplosionHandler, KnockbackHandler, VelocityVerdict};
-use crate::world::{BlockView, PendingBlocks};
+use crate::world::{Around, BlockView, Overlay, PendingBlocks, StateShape};
 
 /// The adapter's id for a connected player (Horizon's connection id).
 pub type PlayerKey = u32;
@@ -125,6 +127,9 @@ pub enum Clientbound {
     Dead(bool),
     /// A block the client will change when it handles this packet.
     BlockChanged([i32; 3]),
+    /// A block the client will set to this state (BlockView::state_shape)
+    /// when it handles this packet.
+    BlockState([i32; 3], u32),
     /// Block changes in this 16x16x16 section were sent that the
     /// integration could not report.
     BlocksUnknownIn([i32; 3]),
@@ -168,6 +173,10 @@ pub const PING_MARK: i32 = 1 << 30;
 const SETBACK_SEND_TICKS: u64 = 40;
 /// Unjudged moves in a row before staff are told (10 s of walking).
 const UNJUDGED_WARN: u32 = 200;
+/// Own digs and places that may hide moves: within this many blocks, at most
+/// this many a second (a client places every 4 ticks, two cells each).
+const OWN_REACH: i64 = 8;
+const OWN_PER_SECOND: u32 = 12;
 const UNKNOWN_WORLD: &str = "unloaded chunks";
 const UNCONFIRMED_BLOCKS: &str = "unconfirmed block changes";
 const AWAITING_SETBACK: &str = "awaiting setback";
@@ -222,6 +231,9 @@ struct PacketState {
     received_tick_end: bool,
     /// A prediction ran since the last tick end.
     predicted_this_tick: bool,
+    /// Own digs and places counted since this tick.
+    own_since: u64,
+    own_count: u32,
     flying_packets: u32,
     last_delta_yaw: f32,
     aim_exempt: bool,
@@ -376,6 +388,9 @@ pub struct Stats {
     pub peak_pending: usize,
     /// The longest run of unjudged predictions of one player.
     pub longest_unjudged: u32,
+    /// Moves judged in each world a client with unconfirmed block changes
+    /// may see, instead of skipped.
+    pub judged_with_variants: u64,
 }
 
 impl Stats {
@@ -455,6 +470,12 @@ impl Engine {
         self.players.remove(&key);
         for p in self.players.values_mut() {
             p.debug_targets.remove(&key);
+        }
+    }
+    /// Not checked (state known to be incomplete, or staff's choice).
+    pub fn set_exempt(&mut self, key: PlayerKey, exempt: bool) {
+        if let Some(p) = self.players.get_mut(&key) {
+            p.exempt = exempt;
         }
     }
     pub fn set_permission(&mut self, key: PlayerKey, permission: u8) {
@@ -627,6 +648,14 @@ impl Engine {
                 p.pending_blocks.add(pos, tx.wrapping_add(1));
                 self.stats.count_pending(&p.pending_blocks, before);
             }
+            Clientbound::BlockState(pos, state) => {
+                let before = (p.pending_blocks.spilled, p.pending_blocks.overflowed);
+                let m = &p.movement;
+                let at = [m.x.floor() as i32, m.y.floor() as i32, m.z.floor() as i32];
+                p.pending_blocks
+                    .add_state(pos, state, tx.wrapping_add(1), at);
+                self.stats.count_pending(&p.pending_blocks, before);
+            }
             Clientbound::BlocksUnknownIn(section) => {
                 self.stats.blocks_lost += 1;
                 let before = (p.pending_blocks.spilled, p.pending_blocks.overflowed);
@@ -664,6 +693,28 @@ impl Engine {
         }
         self.players.insert(key, p);
         verdicts
+    }
+
+    /// The player's own dig or place: the client may show its guess there
+    /// until the server answers. Only within reach and at a rate a client can
+    /// act at: beyond that, packets would hide the player's moves for free.
+    fn own_change(&mut self, p: &mut PlayerData, pos: [i32; 3], world: &dyn BlockView) {
+        let m = &p.movement;
+        let at = [m.x.floor() as i32, m.y.floor() as i32, m.z.floor() as i32];
+        if (0..3).any(|i| (i64::from(pos[i]) - i64::from(at[i])).abs() > OWN_REACH) {
+            return;
+        }
+        if self.tick.saturating_sub(p.packets.own_since) >= 20 {
+            p.packets.own_since = self.tick;
+            p.packets.own_count = 0;
+        }
+        if p.packets.own_count >= OWN_PER_SECOND {
+            return;
+        }
+        p.packets.own_count += 1;
+        let before = world.state_at(pos[0], pos[1], pos[2]);
+        p.pending_blocks
+            .add_own(pos, before, p.tx.last_sent.wrapping_add(1));
     }
 
     /// Skip metrics, and one staff log line when a player's movement goes
@@ -800,16 +851,19 @@ impl Engine {
             }
             Serverbound::UseItemOn { pos, face } => {
                 let d = face_offset(*face);
-                let tx = p.tx.last_sent.wrapping_add(1);
-                p.pending_blocks.add(*pos, tx);
-                p.pending_blocks
-                    .add([pos[0] + d[0], pos[1] + d[1], pos[2] + d[2]], tx);
+                let next = [
+                    pos[0].wrapping_add(d[0]),
+                    pos[1].wrapping_add(d[1]),
+                    pos[2].wrapping_add(d[2]),
+                ];
+                self.own_change(p, *pos, world);
+                self.own_change(p, next, world);
                 self.packet_order_reset(p);
                 Verdict::Keep
             }
             Serverbound::Dig { action, pos } => {
                 if (0..=2).contains(action) {
-                    p.pending_blocks.add(*pos, p.tx.last_sent.wrapping_add(1));
+                    self.own_change(p, *pos, world);
                 }
                 self.packet_order_reset(p);
                 Verdict::Keep
@@ -846,7 +900,9 @@ impl Engine {
         p.tx.last_received = id;
         p.tx.player_clock_at_least = Some(sent);
         p.tx.acked_tick = tick;
-        p.pending_blocks.confirm(id);
+        let m = &p.movement;
+        let at = [m.x.floor() as i32, m.y.floor() as i32, m.z.floor() as i32];
+        p.pending_blocks.confirm(id, at);
         // Timer: the first transaction after a movement moves the clock.
         if p.timer.has_movement_after_transaction {
             p.timer.known_player_clock = p.timer.last_movement_player_clock;
@@ -1145,9 +1201,11 @@ impl Engine {
     /// `NoFall.isNearGround`.
     fn near_ground(&self, p: &PlayerData, world: &dyn BlockView) -> bool {
         let m = &p.movement;
-        let feet = m
+        let mut feet = m
             .box_at(m.x, m.y, m.z, 0.6, 0.001)
             .inflate(MOVEMENT_THRESHOLD);
+        // A client stops up to HOVER_GAP above a surface and stands there.
+        feet.min_y -= HOVER_GAP;
         let mut boxes = Vec::new();
         world.collision_boxes(feet, &mut boxes);
         boxes.iter().any(|b| feet.collides_vertically(b))
@@ -1268,7 +1326,16 @@ impl Engine {
             area.max_z.floor() as i32,
         );
         let unknown_world = !world.are_chunks_loaded(x0, z0, x1, z1);
-        let unconfirmed_blocks = p.pending_blocks.touches(area);
+        // Cells the client may still show in older states: judged in each
+        // world it may see (a prefix of the changes in send order); skipped
+        // only when a state is not known or there are too many worlds.
+        let worlds: Option<ClientWorlds> = match p.pending_blocks.around(area) {
+            Around::Known => Some(ClientWorlds::default()),
+            Around::Unknown => None,
+            Around::Worlds { cells, worlds } => resolve_worlds(world, cells, worlds),
+        };
+        let unconfirmed_blocks = worlds.is_none();
+        let worlds = worlds.unwrap_or_default();
         let awaiting_setback = p.awaiting_setback.is_some();
         let off = self.checks_off(p);
 
@@ -1286,15 +1353,46 @@ impl Engine {
             None => Default::default(),
         };
         let start = std::time::Instant::now();
-        let mut result = {
+        let update = PositionUpdate {
+            to,
+            on_ground,
+            is_teleport: false,
+            teleport_velocity: None,
+        };
+        let mut result = if worlds.worlds.len() <= 1 {
             let mut cx = self.context(world, &mut kb, &mut ex, disallow_stepping);
-            let update = PositionUpdate {
-                to,
-                on_ground,
-                is_teleport: false,
-                teleport_velocity: None,
-            };
             prediction::check(&mut p.movement, &mut cx, update)
+        } else {
+            // The world the client sees is one of these; keep the one that
+            // explains the move best (at most PendingBlocks::WORLDS).
+            self.stats.judged_with_variants += 1;
+            let before = (p.movement.clone(), kb.clone(), ex.clone());
+            let mut best: Option<(
+                prediction::PredictionComplete,
+                Movement,
+                KnockbackHandler,
+                ExplosionHandler,
+            )> = None;
+            for w in &worlds.worlds {
+                let cells = worlds
+                    .cells
+                    .iter()
+                    .zip(w)
+                    .map(|(pos, &k)| (*pos, &worlds.shapes[k]))
+                    .collect();
+                let view = Overlay { base: world, cells };
+                let (mut m, mut kb2, mut ex2) = before.clone();
+                let r = {
+                    let mut cx = self.context(&view, &mut kb2, &mut ex2, disallow_stepping);
+                    prediction::check(&mut m, &mut cx, update)
+                };
+                if best.as_ref().is_none_or(|b| r.offset < b.0.offset) {
+                    best = Some((r, m, kb2, ex2));
+                }
+            }
+            let (r, m, kb2, ex2) = best.expect("at least one variant");
+            (p.movement, kb, ex) = (m, kb2, ex2);
+            r
         };
         // The tick after a teleport sent no position: if standing still does
         // not explain this move, the client may have stepped back onto its
@@ -1718,6 +1816,56 @@ impl Engine {
     pub fn last_offset(&self, key: PlayerKey) -> Option<f64> {
         self.players.get(&key).map(|p| p.last_offset)
     }
+}
+
+/// The worlds a client may see around a move, by shape.
+#[derive(Default)]
+struct ClientWorlds {
+    cells: Vec<[i32; 3]>,
+    shapes: Vec<StateShape>,
+    /// Per world, an index into `shapes` per cell; physically equal worlds
+    /// once.
+    worlds: Vec<Vec<usize>>,
+}
+
+/// `None` when a state cannot be described, or more than
+/// PendingBlocks::WORLDS physically different worlds remain.
+fn resolve_worlds(
+    view: &dyn BlockView,
+    cells: Vec<[i32; 3]>,
+    worlds: Vec<Vec<u32>>,
+) -> Option<ClientWorlds> {
+    let mut shapes: Vec<StateShape> = Vec::new();
+    let mut by_state: HashMap<u32, usize> = HashMap::new();
+    let mut out: Vec<Vec<usize>> = Vec::with_capacity(worlds.len());
+    for w in worlds {
+        let mut row = Vec::with_capacity(w.len());
+        for s in w {
+            let k = match by_state.get(&s) {
+                Some(&k) => k,
+                None => {
+                    // States that differ only where movement cannot tell (a
+                    // lamp lit or not, wire power) are one shape.
+                    let shape = view.state_shape(s)?;
+                    let k = shapes.iter().position(|x| *x == shape).unwrap_or_else(|| {
+                        shapes.push(shape);
+                        shapes.len() - 1
+                    });
+                    by_state.insert(s, k);
+                    k
+                }
+            };
+            row.push(k);
+        }
+        if !out.contains(&row) {
+            out.push(row);
+        }
+    }
+    (out.len() <= PendingBlocks::WORLDS).then_some(ClientWorlds {
+        cells,
+        shapes,
+        worlds: out,
+    })
 }
 
 fn face_offset(face: i32) -> [i32; 3] {

@@ -59,23 +59,36 @@ only a live run measures (Horizon's `horizon-server status` reports MSPT);
 none has run yet. Heap per player is live heap divided by players, so the
 10-player row carries the engine's fixed tables.
 
-| Scenario | Players | avg ms | p95 ms | p99 ms | Heap/player | Alerts on legit players | Moves not judged (blocks / chunks) | Longest unjudged run | Peak pending | Spilled / overflowed |
-|---|---|---|---|---|---|---|---|---|---|---|
-| walking | 10 | 0.103 | 0.188 | 0.232 | 32.7 KB | 0 | 0 / 0 | 0 | 0 | 0 / 0 |
-| walking | 50 | 0.525 | 0.668 | 0.713 | 5.7 KB | 0 | 0 / 0 | 0 | 0 | 0 / 0 |
-| walking | 100 | 1.072 | 1.273 | 1.385 | 5.6 KB | 0 | 0 / 0 | 0 | 0 | 0 / 0 |
-| TNT: 2,000 changes per player per tick, 30 blocks away | 100 | 12.269 | 13.497 | 13.981 | 73.6 KB | 0 | 0 / 0 | 0 | 2,160 | 0 / 0 |
-| every player teleported every 100 ticks | 100 | 1.052 | 1.248 | 1.314 | 5.6 KB | 0 | 0 / 0 | 0 | 0 | 0 / 0 |
-| reconnection storm: 20 % leave and rejoin every 60 ticks | 100 | 1.051 | 1.245 | 1.330 | 8.1 KB | 0 | 0 / 0 | 0 | 0 | 0 / 0 |
-| network jitter: pongs 1-8 ticks late, packets held up to 3 ticks | 100 | 1.069 | 1.312 | 1.437 | 6.0 KB | 0 | 0 / 0 | 0 | 0 | 0 / 0 |
-| a block beside every player changing every 5 ticks | 100 | 1.070 | 1.270 | 1.352 | 5.7 KB | 0 | 22,614 / 0 | 3 | 1 | 0 / 0 |
-| all of the above at once | 100 | 11.633 | 13.350 | 14.150 | 76.3 KB | 0 | 96,738 / 0 | 116 | 2,163 | 0 / 0 |
+Measured again after the block-state work (same Mac, same session as the
+A/B in PROGRESS.md):
+
+| Scenario | Players | avg ms | p95 ms | p99 ms | Heap/player | Alerts on legit players | Moves not judged (blocks / chunks) | Moves judged in block-state worlds | Longest unjudged run | Peak pending | Spilled / overflowed |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| walking | 10 | 0.105 | 0.193 | 0.248 | 32.8 KB | 0 | 0 / 0 | 0 | 0 | 0 | 0 / 0 |
+| walking | 50 | 0.530 | 0.680 | 0.727 | 5.8 KB | 0 | 0 / 0 | 0 | 0 | 0 | 0 / 0 |
+| walking | 100 | 1.079 | 1.272 | 1.350 | 5.7 KB | 0 | 0 / 0 | 0 | 0 | 0 | 0 / 0 |
+| TNT: 2,000 changes per player per tick, 30 blocks away | 100 | 10.378 | 10.929 | 11.326 | 73.8 KB | 0 | 0 / 0 | 0 | 0 | 2,160 | 0 / 0 |
+| every player teleported every 100 ticks | 100 | 1.065 | 1.259 | 1.317 | 5.7 KB | 0 | 0 / 0 | 0 | 0 | 0 | 0 / 0 |
+| reconnection storm: 20 % leave and rejoin every 60 ticks | 100 | 1.064 | 1.270 | 1.363 | 8.4 KB | 0 | 0 / 0 | 0 | 0 | 0 | 0 / 0 |
+| network jitter: pongs 1-8 ticks late, packets held up to 3 ticks | 100 | 1.082 | 1.320 | 1.456 | 6.1 KB | 0 | 0 / 0 | 0 | 0 | 0 | 0 / 0 |
+| a block beside every player switching stone/air every 5 ticks | 100 | 1.256 | 1.992 | 2.179 | 5.2 KB | 0 | 34 / 0 | 13,873 | 1 | 1 | 0 / 0 |
+| all of the above at once | 100 | 10.658 | 11.330 | 13.857 | 76.3 KB | 0 | 1,363 / 0 | 63,767 | 12 | 2,161 | 0 / 0 |
+
+Before the block-state work (0b103c6, same session): TNT 12.45 ms and 73.6 KB
+per player; all stresses 11.81 ms; the block beside each player (sent without
+states then) left 22,614 moves unjudged. The first block-state version cost
+13.06 ms and 202 KB per player under TNT; keeping histories only for nearby,
+known states brought it to the numbers above.
+
+`bench_blocks` (100 players, 2,000 changes each per tick, near them): 22.5 ms
+per tick now; 20.0-21.5 ms for 0b103c6 and 21.8-22.1 ms for this code when
+run back to back.
 
 Read with care:
 
-* The changing block beside each player is the fail-open case: those moves
-  are not judged. Under jitter a player went 116 moves in a row unjudged;
-  past 200 the engine logs it once.
+* The changing block beside each player is now judged in each world the
+  client may show; the 34 moves not judged are each cell's first change,
+  whose earlier state is not known.
 * No update was dropped or spilled here: 2,000 changes a tick stay under the
   4,096-position limit because each is confirmed within a few ticks.
 * The first version of this benchmark found two problems in the benchmark

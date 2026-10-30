@@ -15,6 +15,7 @@ use grim_horizon_engine::engine::{Action, Clientbound as GC, Engine, Serverbound
 use grim_horizon_engine::entities::EntitySnapshot;
 use grim_horizon_engine::math::{Aabb as GAabb, Vec3 as GVec3};
 use grim_horizon_engine::player::{Attr, Effect, Modifier, ModifierOp};
+use grim_horizon_engine::recovery::{GlobalOutcome, Recovery, panic_message};
 use grim_horizon_engine::routing::SenderRoutes;
 use grim_horizon_engine::world::{BlockFacts, BlockKind, BlockView, FluidFacts, FluidKind};
 use grim_horizon_engine::{Config, PING_MARK};
@@ -44,7 +45,8 @@ pub enum Outgoing {
     Respawn(i32),
     Login { entity: i32, game_mode: i32 },
     Health(f32),
-    Blocks(Vec<[i32; 3]>),
+    /// Positions and the block states they were set to.
+    Blocks(Vec<([i32; 3], u32)>),
     /// Block changes in this section dropped because the outbox was full.
     BlocksLost([i32; 3]),
     Passengers { vehicle: i32, passengers: Vec<i32> },
@@ -53,11 +55,67 @@ pub enum Outgoing {
 static OUTBOX: Mutex<Vec<(Arc<AtomicUsize>, Outgoing)>> = Mutex::new(Vec::new());
 static ENGINE: Mutex<Option<Adapter>> = Mutex::new(None);
 static LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
-static SIZES: OnceLock<()> = OnceLock::new();
+/// The server's entity sizes reached the engine (again after a rebuild).
+static SIZES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static DISABLED: OnceLock<bool> = OnceLock::new();
 
+/// What to do after a caught panic (grim_horizon_engine::recovery).
+static RECOVERY: std::sync::LazyLock<Mutex<Recovery>> = std::sync::LazyLock::new(Default::default);
+static START: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
+/// Lines for online staff, delivered at the end of the tick.
+static NOTICES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+fn recovery() -> std::sync::MutexGuard<'static, Recovery> {
+    RECOVERY.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn disabled() -> bool {
-    *DISABLED.get_or_init(|| std::env::var("GRIM_HORIZON_DISABLE").is_ok_and(|v| v == "1"))
+    recovery().is_off() || *DISABLED.get_or_init(|| std::env::var("GRIM_HORIZON_DISABLE").is_ok_and(|v| v == "1"))
+}
+
+fn notice(line: String) {
+    log_line(line.clone());
+    let mut n = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
+    if n.len() < 64 {
+        n.push(line);
+    }
+}
+
+/// Every online operator (at the anti-cheat's permission level) is told.
+fn tell_staff(hub: &Hub, line: &str, level: u8) {
+    for g in hub.guests.iter().filter(|g| g.permission >= level) {
+        g.send(&C::SystemChat(play::SystemChat { content: super::string(line), overlay: false }));
+    }
+}
+
+/// Runs a hook that touches state shared by every player. After a panic
+/// that state is unknown, so it is never used again: the engine is rebuilt
+/// (players online stay unchecked until they rejoin, as their state would be
+/// incomplete), or, after repeated failures, the anti-cheat turns off.
+/// Either way staff are told at once, and reminded while it is off.
+fn guarded<R>(fallback: R, f: impl FnOnce() -> R) -> R {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(r) => r,
+        Err(e) => {
+            let what = panic_message(&*e);
+            let (outcome, line) = recovery().global_panic(START.elapsed().as_secs(), &what);
+            let mut guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
+            let online: Vec<u32> = guard.as_ref().map(|a| a.engine.players().map(|p| p.key).collect()).unwrap_or_default();
+            *guard = match outcome {
+                GlobalOutcome::Rebuild => {
+                    SIZES.store(false, std::sync::atomic::Ordering::Relaxed);
+                    let mut fresh = Adapter::new();
+                    fresh.unchecked.extend(online);
+                    Some(fresh)
+                }
+                GlobalOutcome::Off => None,
+            };
+            drop(guard);
+            OUTBOX.lock().unwrap_or_else(|e| e.into_inner()).clear();
+            notice(line);
+            fallback
+        }
+    }
 }
 
 pub fn log_line(line: String) {
@@ -88,6 +146,12 @@ pub struct Adapter {
     facts: FactsCache,
     /// Guests whose inbox the engine read since the last `inbox_done`.
     processed: Vec<u32>,
+    /// Kicked after an internal error while checking them: left alone until
+    /// they are gone.
+    kicked: HashSet<u32>,
+    /// Online when the engine was rebuilt: their state is incomplete, so they
+    /// are not checked until they rejoin.
+    unchecked: HashSet<u32>,
 }
 
 /// Block facts by block state, decoded from names the first time.
@@ -157,6 +221,8 @@ impl Adapter {
             names_loaded: false,
             facts: FactsCache::default(),
             processed: Vec::new(),
+            kicked: HashSet::new(),
+            unchecked: HashSet::new(),
         }
     }
 
@@ -173,6 +239,15 @@ impl Adapter {
             self.attributes.push(hub.registry_name("minecraft:attribute", id).and_then(Attr::from_name));
             self.effects.push(hub.registry_name("minecraft:mob_effect", id).and_then(Effect::from_name));
         }
+    }
+
+    /// Everything about a connection, in the engine and here.
+    fn forget(&mut self, conn: u32) {
+        self.engine.remove_player(conn);
+        self.seen.remove(&conn);
+        self.entity_ids.remove(&conn);
+        self.riding.remove(&conn);
+        self.routes.unbind(conn);
     }
 
     /// Hands what the senders saw to the engine, in send order.
@@ -232,8 +307,8 @@ impl Adapter {
             }
             Outgoing::Health(h) => GC::Dead(h <= 0.0),
             Outgoing::Blocks(list) => {
-                for pos in list {
-                    self.engine.on_outgoing(conn, GC::BlockChanged(pos));
+                for (pos, state) in list {
+                    self.engine.on_outgoing(conn, GC::BlockState(pos, state));
                 }
                 return;
             }
@@ -374,27 +449,30 @@ impl BlockView for View<'_, '_, '_> {
             let id = self.world.block(x, y, z);
             self.facts.borrow_mut().get(self.binding, id).1
         };
-        let kind = match fluid.kind() {
-            HFluidKind::Water | HFluidKind::FlowingWater => FluidKind::Water,
-            HFluidKind::Lava | HFluidKind::FlowingLava => FluidKind::Lava,
-            HFluidKind::Empty => return FluidFacts::default(),
-        };
         let above = {
             let id = self.world.block(x, y + 1, z);
             self.facts.borrow_mut().get(self.binding, id).1
         };
-        let same_above = match above.kind() {
-            HFluidKind::Water | HFluidKind::FlowingWater => kind == FluidKind::Water,
-            HFluidKind::Lava | HFluidKind::FlowingLava => kind == FluidKind::Lava,
-            HFluidKind::Empty => false,
-        };
-        FluidFacts {
-            kind,
-            amount: fluid.amount(),
-            source: fluid.is_source(),
-            falling: fluid.falling(),
-            height: if same_above { 1.0 } else { fluid.own_height() },
-        }
+        fluid_facts(fluid, Some(above))
+    }
+    fn state_at(&self, x: i32, y: i32, z: i32) -> Option<u32> {
+        Some(self.world.block(x, y, z).0)
+    }
+    fn state_shape(&self, state: u32) -> Option<grim_horizon_engine::world::StateShape> {
+        let id = BlockStateId(state);
+        let (facts, fluid) = self.facts.borrow_mut().get(self.binding, id);
+        // Shapes that depend on where they stand or who looks have no cached
+        // shape: unknown, not judged.
+        let shape = self.binding.cached_shapes().cached_shape(id).ok()??;
+        let boxes = shape
+            .boxes()
+            .iter()
+            .map(|b| {
+                let (lo, hi) = (b.min_position(), b.max_position());
+                GAabb::new(lo.x, lo.y, lo.z, hi.x, hi.y, hi.z)
+            })
+            .collect();
+        Some(grim_horizon_engine::world::StateShape { facts, fluid: fluid_facts(fluid, None), boxes })
     }
     fn block_collision_boxes(&self, x: i32, y: i32, z: i32, out: &mut Vec<GAabb>) {
         // Scan the cell and its upper neighbour space; keep this block's hits.
@@ -429,6 +507,28 @@ impl BlockView for View<'_, '_, '_> {
                 out.push(GAabb::new(lo.x, lo.y, lo.z, hi.x, hi.y, hi.z));
             }
         }
+    }
+}
+
+/// A fluid as the engine sees it; `above` (the fluid over it) makes it full
+/// height when it is the same fluid.
+fn fluid_facts(fluid: FluidState, above: Option<FluidState>) -> FluidFacts {
+    let kind = match fluid.kind() {
+        HFluidKind::Water | HFluidKind::FlowingWater => FluidKind::Water,
+        HFluidKind::Lava | HFluidKind::FlowingLava => FluidKind::Lava,
+        HFluidKind::Empty => return FluidFacts::default(),
+    };
+    let same_above = above.is_some_and(|a| match a.kind() {
+        HFluidKind::Water | HFluidKind::FlowingWater => kind == FluidKind::Water,
+        HFluidKind::Lava | HFluidKind::FlowingLava => kind == FluidKind::Lava,
+        HFluidKind::Empty => false,
+    });
+    FluidFacts {
+        kind,
+        amount: fluid.amount(),
+        source: fluid.is_source(),
+        falling: fluid.falling(),
+        height: if same_above { 1.0 } else { fluid.own_height() },
     }
 }
 
@@ -490,6 +590,10 @@ fn grim_command(packet: &S) -> Option<&str> {
 
 /// `Hub::process_inbox` HEAD: the guest's new packets, in order.
 pub fn process_inbox(hub: &mut Hub, i: usize, ctx: &mut TickCtx<'_>, events: &mut Vec<HostEvent>) {
+    guarded((), || process_inbox_inner(hub, i, ctx, events))
+}
+
+fn process_inbox_inner(hub: &mut Hub, i: usize, ctx: &mut TickCtx<'_>, events: &mut Vec<HostEvent>) {
     let _ = events;
     if disabled() || i >= hub.guests.len() {
         return;
@@ -498,11 +602,17 @@ pub fn process_inbox(hub: &mut Hub, i: usize, ctx: &mut TickCtx<'_>, events: &mu
     let adapter = guard.get_or_insert_with(Adapter::new);
     adapter.load_names(hub);
     let conn = hub.guests[i].conn;
+    if adapter.kicked.contains(&conn) {
+        return;
+    }
     if adapter.engine.player(conn).is_none() {
         // Everything sent so far, in order, before the join burst.
         adapter.drain_outbox();
         let g = &hub.guests[i];
         adapter.engine.add_player(conn, g.uuid, &g.name, g.permission);
+        if adapter.unchecked.contains(&conn) {
+            adapter.engine.set_exempt(conn, true);
+        }
         adapter.entity_ids.insert(conn, g.entity_id);
         adapter.engine.on_outgoing(conn, GC::EntityId(g.entity_id));
         adapter.engine.on_outgoing(conn, GC::GameMode(g.game_mode));
@@ -529,13 +639,28 @@ pub fn process_inbox(hub: &mut Hub, i: usize, ctx: &mut TickCtx<'_>, events: &mu
         packets.push(convert(p));
     }
     let now = adapter.now();
-    let verdicts = match ctx.collision {
+    // This player's packets: a panic here loses only this player's state
+    // (the engine holds it outside its map while it works), so only this
+    // player is reset, by a kick; nobody else's checks change.
+    let checked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match ctx.collision {
         Some(binding) => {
             let g = &hub.guests[i];
             let view = View { world: &*ctx.world, binding, sent_chunks: &g.sent_chunks, facts: std::cell::RefCell::new(&mut adapter.facts) };
             adapter.engine.on_incoming(conn, &packets, &view, now)
         }
         None => adapter.engine.on_incoming(conn, &packets, &Unknown, now),
+    }));
+    let verdicts = match checked {
+        Ok(v) => v,
+        Err(e) => {
+            let line = recovery().player_panic(&hub.guests[i].name, &panic_message(&*e));
+            adapter.forget(conn);
+            adapter.kicked.insert(conn);
+            log_line(line.clone());
+            tell_staff(hub, &line, adapter.engine.config.permission_level);
+            hub.kick(conn, super::string("Grim-Horizon: internal error, please reconnect"));
+            return;
+        }
     };
 
     // Apply the verdicts back to front so indexes stay valid.
@@ -599,6 +724,10 @@ fn reload(adapter: &mut Adapter) -> String {
 /// count would hide its next packets (its spawn teleport's acceptance) from
 /// the engine.
 pub fn inbox_done(hub: &Hub) {
+    guarded((), || inbox_done_inner(hub))
+}
+
+fn inbox_done_inner(hub: &Hub) {
     if disabled() {
         return;
     }
@@ -613,6 +742,10 @@ pub fn inbox_done(hub: &Hub) {
 
 /// `Hub::tick_level` HEAD: every entity and player of the level.
 pub fn record_level(hub: &Hub, ctx: &TickCtx<'_>) {
+    guarded((), || record_level_inner(hub, ctx))
+}
+
+fn record_level_inner(hub: &Hub, ctx: &TickCtx<'_>) {
     if disabled() {
         return;
     }
@@ -640,6 +773,22 @@ pub fn record_level(hub: &Hub, ctx: &TickCtx<'_>) {
 
 /// `Hub::end_tick` HEAD: the end of the server tick.
 pub fn end_tick(hub: &mut Hub) {
+    guarded((), || end_tick_inner(hub));
+    // Failures are told to staff at once (the tick they happen), and the
+    // anti-cheat being off is repeated every minute.
+    let level = ENGINE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map_or(2, |a| a.engine.config.permission_level);
+    let reminder = recovery().reminder(START.elapsed().as_secs());
+    let mut lines = std::mem::take(&mut *NOTICES.lock().unwrap_or_else(|e| e.into_inner()));
+    if let Some(r) = reminder {
+        log_line(r.clone());
+        lines.push(r);
+    }
+    for line in lines {
+        tell_staff(hub, &line, level);
+    }
+}
+
+fn end_tick_inner(hub: &mut Hub) {
     if disabled() {
         return;
     }
@@ -650,12 +799,10 @@ pub fn end_tick(hub: &mut Hub) {
     let online: HashSet<u32> = hub.guests.iter().map(|g| g.conn).collect();
     let gone: Vec<u32> = adapter.engine.players().map(|p| p.key).filter(|k| !online.contains(k)).collect();
     for key in gone {
-        adapter.engine.remove_player(key);
-        adapter.seen.remove(&key);
-        adapter.entity_ids.remove(&key);
-        adapter.riding.remove(&key);
-        adapter.routes.unbind(key);
+        adapter.forget(key);
     }
+    adapter.kicked.retain(|k| online.contains(k));
+    adapter.unchecked.retain(|k| online.contains(k));
     adapter.routes.sweep();
     let now = adapter.now();
     adapter.engine.end_tick(now);
@@ -664,9 +811,16 @@ pub fn end_tick(hub: &mut Hub) {
 
 /// A `grim ...` line from the server console; `None` for anything else.
 pub fn console(line: &str) -> Option<Vec<String>> {
+    guarded(None, || console_inner(line))
+}
+
+fn console_inner(line: &str) -> Option<Vec<String>> {
     let rest = line.strip_prefix("grim")?;
     if !(rest.is_empty() || rest.starts_with(' ')) {
         return None;
+    }
+    if recovery().is_off() {
+        return Some(vec!["Grim-Horizon is OFF after repeated internal errors (see the log); restart the server.".into()]);
     }
     let mut guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
     let adapter = guard.get_or_insert_with(Adapter::new);
@@ -680,21 +834,32 @@ pub fn console(line: &str) -> Option<Vec<String>> {
 }
 
 pub fn sizes_registered() -> bool {
-    SIZES.get().is_some()
+    SIZES.load(std::sync::atomic::Ordering::Relaxed) || disabled()
 }
 
 /// Entity sizes from the server's own entity table.
 pub fn register_sizes(sizes: &[(String, f32, f32)]) {
+    guarded((), || register_sizes_inner(sizes))
+}
+
+fn register_sizes_inner(sizes: &[(String, f32, f32)]) {
+    if disabled() {
+        return;
+    }
     let mut guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
     let adapter = guard.get_or_insert_with(Adapter::new);
     for (id, w, h) in sizes {
         adapter.engine.register_entity_size(id, *w, *h);
     }
-    let _ = SIZES.set(());
+    SIZES.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// `PlayerSender::send` HEAD: decodes the few packets the engine needs.
 pub fn observe_send(sender: &Arc<AtomicUsize>, body: &[u8]) {
+    guarded((), || observe_send_inner(sender, body))
+}
+
+fn observe_send_inner(sender: &Arc<AtomicUsize>, body: &[u8]) {
     if disabled() {
         return;
     }
@@ -745,13 +910,13 @@ pub fn observe_send(sender: &Arc<AtomicUsize>, body: &[u8]) {
         C::Respawn(p) => Outgoing::Respawn(p.spawn.game_type),
         C::Login(p) => Outgoing::Login { entity: p.player_id, game_mode: p.spawn.game_type },
         C::SetHealth(p) => Outgoing::Health(p.health),
-        C::BlockUpdate(p) => Outgoing::Blocks(vec![p.pos]),
+        C::BlockUpdate(p) => Outgoing::Blocks(vec![(p.pos, p.state as u32)]),
         C::SectionBlocksUpdate(p) => {
             let [sx, sy, sz] = p.section;
             Outgoing::Blocks(
                 p.changes
                     .iter()
-                    .map(|c| [sx * 16 + ((c >> 8) & 15) as i32, sy * 16 + (c & 15) as i32, sz * 16 + ((c >> 4) & 15) as i32])
+                    .map(|c| ([sx * 16 + ((c >> 8) & 15) as i32, sy * 16 + (c & 15) as i32, sz * 16 + ((c >> 4) & 15) as i32], (c >> 12) as u32))
                     .collect(),
             )
         }
@@ -764,7 +929,7 @@ pub fn observe_send(sender: &Arc<AtomicUsize>, body: &[u8]) {
     // player unjudged), and lost block changes leave their section unknown.
     let o = match o {
         Outgoing::Blocks(list) if out.len() >= 1 << 16 => match list.first() {
-            Some(p) => Outgoing::BlocksLost(p.map(|c| c >> 4)),
+            Some((p, _)) => Outgoing::BlocksLost(p.map(|c| c >> 4)),
             None => return,
         },
         o => o,

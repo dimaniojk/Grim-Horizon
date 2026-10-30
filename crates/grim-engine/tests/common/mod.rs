@@ -689,7 +689,10 @@ fn shapes_collide(mut v: f64, boxes: &[Aabb], collide: impl Fn(&Aabb, f64) -> f6
 /// Drives the engine with a client's packets and answers transactions.
 pub struct Harness {
     pub engine: Engine,
+    /// The server's world (and the client's, unless `client_world` is set).
     pub world: TestWorld,
+    /// What a lagging client still sees, when it differs from the server.
+    pub client_world: Option<TestWorld>,
     pub client: Client,
     pub now: u64,
     /// Ticks between a ping and its pong (latency).
@@ -716,6 +719,7 @@ impl Harness {
         let mut h = Self {
             engine,
             world,
+            client_world: None,
             client: Client::new(spawn),
             now: 1_000_000_000_000,
             latency_ticks: 1,
@@ -831,7 +835,8 @@ impl Harness {
             self.pings.pop_front();
             packets.push(Serverbound::Pong { id });
         }
-        packets.extend(self.client.packets(&self.world, keys, tamper));
+        let world = self.client_world.as_ref().unwrap_or(&self.world);
+        packets.extend(self.client.packets(world, keys, tamper));
         packets
     }
 

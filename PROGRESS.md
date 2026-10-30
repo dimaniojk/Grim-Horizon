@@ -44,7 +44,7 @@ Timer, GroundSpoof, NoFall, Simulation.
 
 ## Phase 6: validation and packaging (partly done)
 
-* 93 engine tests (plus 2 for grim-bot), including published vanilla numbers, cheat traces,
+* 112 engine tests (plus 2 for grim-bot), 2,000 random seeds clean, including published vanilla numbers, cheat traces,
   latency, bursts, teleports, unloaded chunks and block-change compensation.
 * Random legit play: 300 seeds × 6,000 ticks; 298 clean.
 * Benchmarks (benchmarks/README.md).
@@ -177,12 +177,110 @@ changes per player per tick, teleport bursts, a reconnection storm, network
 jitter and a block changing beside every player all at once: 11.9 ms
 average, 15.3 ms p99, 76 KB per player, no alert on any legitimate player.
 
-## Next
+## Live-validation milestone (2026-10-30, second pass)
+
+Three kinds of evidence, kept apart:
+
+* **Automated tests** (engine, grim-bot, sweep, benchmarks): below.
+* **Server-binary checks**: the Horizon server with Grim-Horizon builds from
+  the pinned commit, starts in a scratch folder (`--initSettings`, 0.6 s),
+  and refuses to run without the EULA (`eula=false` kept, exit 0).
+* **Live-server tests**: none. No grim-bot run and no vanilla-client run
+  against a running server exists.
+
+### Live server: blocked
+
+On this Mac: Java 25 (Temurin) is installed; the only Minecraft install is
+Feather's 1.21.8 profile in `~/Library/Application Support/minecraft` (no
+`versions/26.3`, no 26.3 server jar), which Horizon cannot use. Needed from
+the owner: the official launcher's 26.3 install, the 26.3 server jar, and a
+decision on the EULA. Exact commands: BUILD.md, section 5. The next milestone
+is the 27-check smoke test on a running server; no new checks before it.
+
+### False positives fixed (each a regression seed)
+
+| Seed | Check | Cause | Fix |
+|---|---|---|---|
+| 415 | GroundSpoof | swimming down exactly flush onto the floor: vanilla's collide returns such a move unchanged (no collision, no ground); the engine's 1e-7 wall seek made it a collision | a movement that ends exactly on a surface, not cut by uncertainty, is not a vertical collision |
+| 536 | GroundSpoof | sinking in water, the client stopped 5e-5 above the floor (Entity.move skips collided moves under sqrt(1e-7)) and stood | the client's ground claim is trusted within that gap (HOVER_GAP), as Grim trusts it at an exact touch |
+| 1380 | NoFall | the same hover, claimed in a packet without a position | NoFall's near-ground box reaches HOVER_GAP down |
+| 651 | Simulation 0.009 | sneak-held velocity on ice: Grim's SneakingEstimator keeps the larger of the old hidden velocity and the new input instead of their sum, falling behind on ice | the hidden velocity takes each tick's input |
+| 1258 | Simulation 0.0017 | uncertainty cut a move to exactly where a head-height block stops it; the client really hit the block (velocity zeroed), the engine (and Grim) assumed it stopped short (velocity kept) | for one tick, either velocity is allowed (never more than the real one) |
+
+Candidates are also ranked by the movement Entity.move applies (zero when
+the collided move is under sqrt(1e-7)), not the raw collision.
+
+### Block changes no longer suppress checks
+
+Before, any unconfirmed block change near a player skipped its moves; a block
+that kept changing (a redstone clock) kept the player unjudged forever, and
+the player's own dig and place packets did the same for free. Now:
+
+* the adapter passes each change's block state; `BlockView::state_shape`
+  describes any state from Horizon's registry and shape cache;
+* per nearby position the engine keeps the state the client settled in and
+  each unconfirmed change, confirmed step by step;
+* a client applies changes in order and answers a transaction only after
+  everything sent before it, so the worlds it may show are the changes up to
+  each unanswered transaction (not every combination of cells): a move is
+  predicted in each (at most 16, physically equal ones once) and passes if
+  any explains it;
+* own digs and places: the client shows the server's state or its own guess
+  until the server answers the cell; counted only within 8 blocks and 12 a
+  second.
+
+Adversarial scenarios (`tests/redstone_attacks.rs`), each with a legitimate
+client (no alert expected) and a cheating one (alert expected):
+
+| Scenario | Legit: alerts / longest unjudged run | Cheat caught |
+|---|---|---|
+| clock beside the player | 0 / at most 2 | fly: yes |
+| a wall of 42 clocks along a walk | 0 / at most 2 | speed: yes |
+| full, slab, air every tick on two cells | 0 / at most 2 | fly: yes |
+| a 7x44 floor switching stone and ice | 0 / at most 2 | speed: yes |
+| a clock with a 300 ms round trip | 0 / at most 2 | fly: yes |
+| a block changing every tick, 1.5 s round trip (31 worlds) | 0 / unjudged while it lasts, near that block only | speed leaving the area: yes |
+| 5,000 changes a tick 40 blocks away | 0 / 0 | fly: yes |
+| own place/dig spam around a fly hack | — | yes (hidden before) |
+| bridging with answered placements | 0 / at most one move (the first cell) | — |
+
+### Crash handling
+
+Audit: no panic is reachable from packet contents in the engine as written
+(coordinates are clamped or checked for NaN, slots and faces matched,
+lookups checked; overflow wraps in Horizon's release profiles), but the first
+guard version turned the whole anti-cheat off on any panic, which would give
+one player that power, and left the player's state lost but connected and
+unchecked. Now (`recovery.rs`, ARCHITECTURE.md): a panic while checking one
+player kicks only that player after forgetting the connection, and tells
+staff; a panic in a shared hook rebuilds the engine (players online
+unchecked until they rejoin, staff told); three such within ten minutes
+turn it off with a staff reminder every minute. Tested with injected panics
+(`tests/recovery.rs`); not exercised on a live server.
+
+### Performance and memory (A/B on the same Mac, same session)
+
+Keeping state histories only near the player and only for known states
+(far or stateless changes are 16-byte "unknown until N" entries again):
+
+| bench_load, 100 players | before redstone work (0b103c6) | first version | now |
+|---|---|---|---|
+| TNT 2,000 changes/tick: ms per tick | 12.45 | 13.06 | 10.38 |
+| TNT: heap per player | 73.6 KB | 202 KB | 73.8 KB |
+| all stresses at once: ms per tick | 11.81 | 12.68 | 10.66 |
+| block beside each player: moves not judged | 22,614 | 34 | 34 (now judged in 13,873 moves' worlds) |
+
+bench_blocks (100 players, 2,000 changes per tick each): 20.0-21.5 ms before,
+21.8-22.1 ms now, back to back.
+
+## Next (after the live milestone)
 
 1. Run `tools/smoke_test.py` with prepared game files (BUILD.md section 5),
    then play with a real vanilla 26.3 client in alert-only mode; move
-   PORT_STATUS rows to live-tested only then.
-2. Seeds 415, 536, 651.
-3. Judging near changing blocks with both block states instead of skipping.
+   PORT_STATUS rows to live-tested only then. No new checks before this.
+2. The first change of a cell is still unknown (one round trip unjudged);
+   reading the state the chunk was sent with would close that.
+3. Shape lookups for pending states are not cached (`state_shape` per move
+   near changes).
 4. Ladder, honey and explosion traces; elytra and vehicles.
 5. Propose named server hook points upstream (COMPATIBILITY.md).

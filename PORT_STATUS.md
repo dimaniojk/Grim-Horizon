@@ -8,7 +8,7 @@ Words used here:
 * **Unit tested**: engine tests against packet traces from an independent
   model of the vanilla 26.3 client (`crates/grim-engine/tests`, checked against
   published vanilla numbers) and from scripted cheats, plus random play
-  (`tests/random_play.rs`, 1,000 seeds x 6,000 ticks: 997 clean).
+  (`tests/random_play.rs`, 2,000 seeds x 6,000 ticks: 2,000 clean).
 * **Integration tested**: through the Horizon adapter on a running Horizon
   server. `tools/smoke_test.py` does this with protocol bots for the rows
   marked "smoke test"; **it has not run** (no Minecraft 26.3 game files on
@@ -21,9 +21,9 @@ Words used here:
 
 | Check | Implemented | Unit tested | Integration tested | Live tested | False-positive issues | Known bypasses | Remaining work |
 |---|---|---|---|---|---|---|---|
-| Simulation | yes | yes: movement, cheats, random play, load | smoke test (not run) | no | 3 of 1,000 random seeds (below); a hidden step right after a teleport is retried, not skipped | anything near unconfirmed blocks, unloaded chunks, while awaiting a setback, elytra/vehicles/riptide (exempt) | live test; old-and-new block states instead of skipping |
-| GroundSpoof | yes | yes | not run | no | 2 of 1,000 seeds: shallow water at the floor (seeds 415, 536) | as Simulation | investigate the water-floor ground state |
-| NoFall | yes | indirect only | not run | no | none seen | as Simulation | a dedicated trace |
+| Simulation | yes | yes: movement, cheats, random play, load, block-change attacks | smoke test (not run) | no | none open in 2,000 random seeds | near a cell whose first change is unconfirmed (one round trip), near changing blocks with a round trip over ~800 ms, unloaded chunks, awaiting a setback, elytra/vehicles/riptide (exempt) | live test |
+| GroundSpoof | yes | yes | not run | no | none open (seeds 415, 536 fixed) | as Simulation | live test |
+| NoFall | yes | indirect; seed 1380 regression | not run | no | none open (seed 1380 fixed) | as Simulation | a dedicated trace |
 | Timer (TimerA) | yes | yes (2x timer, latency, bursts) | not run | no | none seen | uses tick-processing time, more lenient than Grim | live latency data |
 | TickTimer | yes | yes | not run | no | none seen | — | — |
 | AntiKB (Knockback) | yes | yes (incl. 8 ticks latency) | not run | no | none seen | — | live combat |
@@ -36,6 +36,8 @@ Words used here:
 | SelfInteract, TransactionOrder, PacketOrderB | yes | yes | not run | no | none seen | — | — |
 | AimModulo360 | yes | yes | not run | no | none seen (it caught two of this repo's own test bots) | — | — |
 | AimDuplicateLook | yes | no trace | not run | no | unknown | — | a trace |
+| Block-change compensation | yes: worlds per unanswered transaction, own digs/places bounded | yes: `tests/redstone_attacks.rs` (10 scenarios, legit and cheating), `tests/fail_open.rs`, unit tests | not run | no | none seen | see Simulation | live test with real redstone |
+| Crash handling | yes: per-player kick, shared rebuild, off after 3 failures in 10 min, staff told | yes: `tests/recovery.rs` (injected panics), `recovery.rs` unit tests | compiles into the server; not exercised live | no | — | a panic while checking a player only disconnects that player | — |
 | Setbacks (SetbackTeleportUtil) | yes | yes: superseded, stale, respawn, unsent, step-up refused after an engine setback, jump resync | smoke test (not run) | no | none seen | — | live test before enabling |
 | Punishments (kick at kick_vl) | yes | yes | smoke test (not run) | no | — | — | set kick_vl per check after live data |
 | Staff alerts, commands, profile, stats | yes | yes | smoke test (not run) | no | — | — | — |
@@ -106,26 +108,33 @@ Words used here:
 
 ## Limitations found by the stress test
 
-`tests/random_play.rs` runs the vanilla-model client with random inputs. 997
-of 1,000 seeds (6,000 ticks each, 6 million ticks) produce no flag. Every
-earlier failing seed was traced to its cause and fixed (PROGRESS.md); the
-regression test `former_false_positive_seeds_are_clean` replays them. Open:
+`tests/random_play.rs` runs the vanilla-model client with random inputs:
+2,000 seeds (6,000 ticks each, 12 million ticks), 2,000 clean. Every
+failing seed found so far was traced to its cause and fixed (PROGRESS.md);
+the regression test `former_false_positive_seeds_are_clean` replays all 13.
 
-* seeds 415 and 536: GroundSpoof, a swimming or standing player in shallow
-  water right at the floor (movements of 0.003 to 0.005 blocks);
-* seed 651: Simulation 0.009, a player who stops sneaking at an ice edge
-  while carrying velocity the edge hid.
+Fail-open (movement deliberately not judged), measured
+(`tests/redstone_attacks.rs`, `bench_load`) and visible in `grim stats`:
 
-Fail-open (movement deliberately not judged), measured and visible:
-
-* near block changes the client has not confirmed. Overflowing changes fall
-  back to their 16x16x16 section, never to the whole world unless 1,024
-  sections are pending. A block that keeps changing next to a player (a
-  redstone clock) keeps that player unjudged as long as it runs: a known
-  bypass. It is counted (`grim stats`) and logged once per 10 s run;
+* near a block whose state before its first unconfirmed change is not known
+  (the first change of a cell nobody watched, shapes that depend on context):
+  one round trip;
+* near blocks changing so fast, or a round trip so long, that more than 16
+  worlds are possible: in the tests, a block changing beside the player every
+  tick with a 1.5 s round trip keeps that player unjudged as long as both
+  last, but only within about a block of it (a speed hack that leaves is
+  caught); a run of 200 moves is logged. Ordinary clocks, walls of clocks,
+  changing floors, alternating shapes and 300 ms latency are judged: longest
+  unjudged run 2 moves, fly and speed hacks caught;
+* positions past 4,096 per player fall back to sections, past 1,024 sections
+  to "everything unknown", until confirmed; a flood 40 blocks away hides
+  nothing near the player;
 * in chunks the client has not been sent;
 * while a setback is awaited (bounded: superseded by any newer teleport, a
   respawn, or 40 ticks without the teleport being sent).
+
+Own dig and place packets count only within 8 blocks and 12 a second; spamming
+them around a fly hack no longer hides it (it did before this change).
 
 The reference client is a model of vanilla written for these tests, not
 vanilla itself, and the bots of the live test use the same model. Live
