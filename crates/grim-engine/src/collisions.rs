@@ -43,27 +43,33 @@ pub fn is_empty(world: &dyn BlockView, bb: Aabb) -> bool {
 }
 
 /// `Collisions.collideBoundingBoxLegacy`.
+/// `Shapes.collide`: a movement below 1e-7 is no movement once there is
+/// anything to collide with.
+fn shapes_collide(mut v: f64, boxes: &[Aabb], collide: impl Fn(&Aabb, f64) -> f64) -> f64 {
+    for b in boxes {
+        if v.abs() < crate::math::COLLISION_EPSILON {
+            return 0.0;
+        }
+        v = collide(b, v);
+    }
+    v
+}
+
 pub fn collide_bounding_box(movement: Vec3, bb: Aabb, boxes: &[Aabb], order: &[Axis; 3]) -> Vec3 {
     let (mut x, mut y, mut z) = (movement.x, movement.y, movement.z);
     let mut set_bb = bb;
     for axis in order {
         match axis {
             Axis::X => {
-                for b in boxes {
-                    x = b.collide_x(&set_bb, x);
-                }
+                x = shapes_collide(x, boxes, |b, v| b.collide_x(&set_bb, v));
                 set_bb = set_bb.offset(x, 0.0, 0.0);
             }
             Axis::Y => {
-                for b in boxes {
-                    y = b.collide_y(&set_bb, y);
-                }
+                y = shapes_collide(y, boxes, |b, v| b.collide_y(&set_bb, v));
                 set_bb = set_bb.offset(0.0, y, 0.0);
             }
             Axis::Z => {
-                for b in boxes {
-                    z = b.collide_z(&set_bb, z);
-                }
+                z = shapes_collide(z, boxes, |b, v| b.collide_z(&set_bb, v));
                 set_bb = set_bb.offset(0.0, 0.0, z);
             }
         }

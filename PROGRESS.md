@@ -44,7 +44,7 @@ Timer, GroundSpoof, NoFall, Simulation.
 
 ## Phase 6: validation and packaging (partly done)
 
-* 83 automated tests, including published vanilla numbers, cheat traces,
+* 93 engine tests (plus 2 for grim-bot), including published vanilla numbers, cheat traces,
   latency, bursts, teleports, unloaded chunks and block-change compensation.
 * Random legit play: 300 seeds × 6,000 ticks; 298 clean.
 * Benchmarks (benchmarks/README.md).
@@ -109,12 +109,80 @@ Found while auditing the Horizon adapter for ways to stop judging a player:
 
 Random play over 300 seeds: 298 clean, the same two seeds as before.
 
+## Validation milestone (2026-10-30)
+
+### Random-play failures, traced and fixed
+
+Each seed was replayed with the debug trail (`SEED=n cargo test --release
+--test random_play debug_first_flag -- --ignored --nocapture`), predicted and
+actual movement compared, and the cause fixed where it was; the seeds are now
+the regression test `former_false_positive_seeds_are_clean`.
+
+| Seed | Check | What happened | Cause | Fix |
+|---|---|---|---|---|
+| 266 | Simulation 0.0018 | sneaking teleport into the air; tick 1 backs off to zero and sends nothing | test model: a teleport reset LocalPlayer's sendPosition baseline, vanilla does not (Horizon's client port says so) | model |
+| 236 | Simulation 0.0317 | sprinting teleport; 14 degrees between predicted and actual direction | test model: an absolute teleport keeps the server's look, the model kept its own | model |
+| 110 | Simulation 0.5 | sneaking against a slab wall with x velocity 7.7e-18 | engine: wall seeking (Grim's 1e-7 push) turned float noise into a movement that stepped up the slab | engine: no seeking below 1e-7 (vanilla's Shapes.collide); model and engine also zero sub-1e-7 axis movement |
+| 216, 274 | Simulation 0.0076 | sneak-edge lenience cut the movement to the wall-flush value | engine (and Grim): the cut value became the velocity; vanilla keeps the uncut velocity or zero after the wall | engine: one tick of lenience between the two |
+| 142, 171, 287 | Simulation 0.0196 | sprint started on a tick that sent only a rotation | engine: such a tick ran no prediction and no idle tick, so sprint, swimming and pose did not advance | engine: advance the state on every tick without a prediction |
+
+Random play now: 300 of 300 seeds clean; 1,000 seeds: 997 clean. Open: 415,
+536 (GroundSpoof in shallow water at the floor), 651 (sneak release on an ice
+edge); see PORT_STATUS.md.
+
+### Teleports and setbacks
+
+* Step-up after a teleport: Grim refuses stepping on the first move after
+  every teleport, because in Grim every server teleport is the required
+  setback. The exploit it prevents needs a setback; refusing a vanilla
+  player's step after /tp, a respawn or a portal is a false positive. Now
+  only after the engine's own setbacks.
+* Ported Grim's post-setback jump resync (MovementCheckRunner): a jump in the
+  first move after a setback with no velocity into the ground, or with no
+  ground in reach, gets another setback (no flag). Grim's second clause
+  (setback velocity) does not apply: this port sends none.
+* Found by the load test: the first tick after a teleport can step exactly
+  back onto the client's last reported position, which vanilla then does not
+  report. The engine now tries that hypothesis when standing still does not
+  explain the next move (the hidden step must itself pass); a test reproduces
+  it exactly.
+
+### Fail-open paths
+
+* Pending block changes: by position (4,096), then by 16x16x16 section
+  (1,024), then everything; a lost outbox update hides only its section.
+  Lookups cost at most the map's size even for a claimed move across the
+  world.
+* Metrics in `grim stats`: predictions not judged by reason, the longest
+  unjudged run, block changes lost / spilled to sections / overflowed, peak
+  pending. A player unjudged for 200 moves in a row is logged once per run.
+* Known and measured: a block changing beside a player every tick keeps that
+  player unjudged (bench: 145 moves in a row under jitter).
+
+### Integration test
+
+* `tools/grim-bot`: a protocol bot that moves with the test suite's vanilla
+  model (legit, speed cheat, standing staff), answers pings in order with
+  what it applies, respawns, and prints what happens. Its walk is checked
+  against the engine in process (6,000 ticks clean; the cheat flags).
+* `tools/smoke_test.py`: 27 separate assertions over three modes (BUILD.md,
+  section 5). **Not run**: no 26.3 game files on this machine and the EULA is
+  the owner's decision. The server binary was built and started in a scratch
+  folder (`--initSettings`, `eula=false` written, nothing accepted).
+
+### Load (engine only, benchmarks/README.md)
+
+100 players walking: 1.06 ms per tick average, 1.35 ms p99; with 2,000 block
+changes per player per tick, teleport bursts, a reconnection storm, network
+jitter and a block changing beside every player all at once: 11.9 ms
+average, 15.3 ms p99, 76 KB per player, no alert on any legitimate player.
+
 ## Next
 
-1. Run the smoke test with prepared resources and a real vanilla client;
-   watch alerts in alert-only mode; move PORT_STATUS rows from
-   "unverified" to verified only then.
-2. Close the two remaining post-teleport mispredictions.
-3. Ladder, honey and explosion traces; elytra and vehicles.
-4. Hot-path allocation (reuse collision buffers).
+1. Run `tools/smoke_test.py` with prepared game files (BUILD.md section 5),
+   then play with a real vanilla 26.3 client in alert-only mode; move
+   PORT_STATUS rows to live-tested only then.
+2. Seeds 415, 536, 651.
+3. Judging near changing blocks with both block states instead of skipping.
+4. Ladder, honey and explosion traces; elytra and vehicles.
 5. Propose named server hook points upstream (COMPATIBILITY.md).

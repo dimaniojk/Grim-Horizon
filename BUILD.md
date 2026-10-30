@@ -76,32 +76,61 @@ operators at `permission_level`. The same commands work on the server console
 without the slash. Clients show `/grim` in red because it is not in the
 server's command tree; it still runs.
 
-## 5. Smoke test on a real server
+## 5. Live test on a real server
 
-The server needs Horizon's prepared resources for Minecraft 26.3, made from
-your own Minecraft installation:
+Nothing in this repository has run against a live server yet: it needs game
+files only you can provide, and a EULA only you can accept. These are the
+exact steps (all on your own machine; nothing touches your worlds).
 
-```sh
-# from a Horizon release, or a build of upstream/horizon:
-horizon-prepare --prepare --server-jar /path/to/your/26.3/server.jar
-```
+1. **Minecraft 26.3, from the official launcher.** Install Minecraft Java
+   Edition with the official launcher (https://www.minecraft.net/download),
+   sign in with the Microsoft account that owns the game, select release
+   26.3 and play it once, so the launcher keeps its files in
+   `~/Library/Application Support/minecraft` (macOS) or `~/.minecraft`.
+2. **The 26.3 server jar.** In the launcher's
+   `versions/26.3/26.3.json`, `downloads.server.url` is Mojang's official
+   download for it. Save it anywhere.
+3. **A Java 25 runtime** (`java -version`; Temurin 25 is already on this Mac).
+4. **Prepare Horizon's game files** from your copy (Horizon's `docs/hosting.md`,
+   step 2), with the `horizon-prepare` of Horizon's pinned commit:
 
-(see Horizon's `docs/hosting.md`; it needs a JDK and the official
-launcher's 26.3 client files). Then build the bots and run the test:
+   ```sh
+   (cd ../upstream/horizon && cargo run --release -p horizon-prepare -- \
+       --prepare --server-jar /path/to/server.jar)
+   # -> ../upstream/horizon/.local/horizon-client/26.3
+   ```
 
-```sh
-(cd work/staged && CARGO_TARGET_DIR=../target cargo build --locked --profile fast -p horizon-bots)
-python3 tools/smoke_test.py --resources /path/to/.local/horizon-client/26.3 \
-    --bots work/target/fast/horizon-bots --accept-eula
-```
+   Add `--minecraft-dir PATH` if your launcher keeps the game elsewhere.
+5. **Build the server** (section 3) and the test player:
 
-`--accept-eula` writes `eula=true` in a scratch server folder: passing it
-means you accept the Minecraft EULA (https://aka.ms/MinecraftEULA). The test
-starts the server in a temporary folder (never your worlds), runs
-`grim checks` on the console, connects two of Horizon's protocol bots, which
-fly upwards in a survival world without permission, and expects Simulation
-alerts, answered transactions and a clean stop. The server log is kept in
-`work/smoke-server.log`.
+   ```sh
+   cargo build --release --offline --manifest-path tools/grim-bot/Cargo.toml
+   ```
 
-For legit movement, join the smoke server with a vanilla 26.3 client and
-play; `/grim debug <you>` prints each prediction's offset.
+6. **Decide on the Minecraft EULA.** A server refuses to start until its
+   `eula.txt` says `eula=true`. Read https://aka.ms/MinecraftEULA; if you
+   accept it, pass `--accept-eula` below. The flag writes `eula=true` in a
+   temporary server folder only, and nowhere else.
+7. **Run:**
+
+   ```sh
+   python3 tools/smoke_test.py --resources ../upstream/horizon/.local/horizon-client/26.3 --accept-eula
+   ```
+
+The test starts the server in a new temporary folder (its own HORIZON_HOME and
+XDG folders, a superflat world) and connects `grim-bot` players. They speak the
+real protocol and move with the same vanilla-model client the engine's tests
+use. It checks, each on its own line: startup, the console, joining, a
+legitimate player walking/jumping/sprinting/sneaking with no alert, a speed
+cheater flagged, staff alerts reaching an operator in game, a console
+teleport, death and respawn, the Nether and back, setback mode (cheater pulled
+back, legitimate player never), punish mode (kick, reconnect, judged and
+kicked again), reconnecting cleanly, ping transactions, no long unjudged runs,
+and a clean stop. Logs go to `work/smoke/`. It prints `LIVE SMOKE TEST
+PASSED` only when every check passed on the running server. Without
+`--accept-eula` or game files it prints `NOT RUN`.
+
+The bots are models, not the real client. After the script passes, join the
+same kind of server with a real vanilla 26.3 client and play; `/grim debug
+<you>` prints each prediction's offset. Only that counts as real-client
+testing.

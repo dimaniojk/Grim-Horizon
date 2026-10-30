@@ -295,6 +295,23 @@ fn update_sneaking_estimator(p: &mut Movement) {
     if p.is_gliding {
         friction = 0.99;
     }
+    update_hidden_box(p, friction);
+    // A sneak lenience cut this movement: the client backed off by an amount
+    // the server cannot see, which never changes vanilla's velocity, so its
+    // velocity is now the uncut one, or zero if the backed-off movement then
+    // hit a wall. One more tick of lenience between the two.
+    if let Some(raw) = p.hidden_cut_from.take() {
+        let v = p.client_velocity;
+        let (rx, rz) = (raw.x * friction - v.x, raw.z * friction - v.z);
+        let b = &mut p.sneaking_hidden;
+        b.min_x = b.min_x.min(-v.x).min(rx);
+        b.max_x = b.max_x.max(-v.x).max(rx);
+        b.min_z = b.min_z.min(-v.z).min(rz);
+        b.max_z = b.max_z.max(-v.z).max(rz);
+    }
+}
+
+fn update_hidden_box(p: &mut Movement, friction: f64) {
     if !p.uncertainty.stuck_on_edge.has_occurred_since(0) {
         p.sneaking_hidden = Aabb::default();
         return;
@@ -1618,6 +1635,10 @@ fn do_predictions(
             best = Some(picked);
             before_collision = test_primary;
             real_before_collision = real_primary;
+            p.hidden_cut_from = (p.sneaking_hidden != Aabb::default()
+                || p.uncertainty.stuck_on_edge.has_occurred_since(0))
+            .then_some(d.vector)
+            .filter(|v| real_primary.x != v.x || real_primary.z != v.z);
             if p.would_collision_result_flag_ground_spoof(test_primary.y, output.y) {
                 accuracy += 0.0001 * 0.0001;
             }
@@ -1649,9 +1670,14 @@ fn seek_wall_collisions(
     original_client_vel: Vec3,
     d: &VectorData,
 ) -> (Vec3, Vec3, Vec3) {
-    let x_add = primary.x.signum() * COLLISION_EPSILON * f64::from(u8::from(primary.x != 0.0));
+    // Below 1e-7 an axis does not move in vanilla (Shapes.collide), so it
+    // cannot touch a wall; seeking would turn float noise into a real
+    // movement that can step up a block the client never stepped on.
+    let seek =
+        |v: f64| v.signum() * COLLISION_EPSILON * f64::from(u8::from(v.abs() >= COLLISION_EPSILON));
+    let x_add = seek(primary.x);
     let y_add = if primary.y > 0.0 { 1.0 } else { -1.0 } * COLLISION_EPSILON;
-    let z_add = primary.z.signum() * COLLISION_EPSILON * f64::from(u8::from(primary.z != 0.0));
+    let z_add = seek(primary.z);
     let mut test = Vec3::new(primary.x + x_add, primary.y + y_add, primary.z + z_add);
     let mut out = collisions::collide(
         p,

@@ -125,8 +125,9 @@ pub enum Clientbound {
     Dead(bool),
     /// A block the client will change when it handles this packet.
     BlockChanged([i32; 3]),
-    /// Block changes were sent that the integration could not report.
-    BlocksUnknown,
+    /// Block changes in this 16x16x16 section were sent that the
+    /// integration could not report.
+    BlocksUnknownIn([i32; 3]),
     /// The player started (`Some(vehicle)`) or stopped riding.
     Riding(Option<i32>),
     /// Sleeping in a bed or not.
@@ -165,6 +166,12 @@ pub enum Verdict {
 pub const PING_MARK: i32 = 1 << 30;
 /// Server ticks a requested setback may go without its teleport being sent.
 const SETBACK_SEND_TICKS: u64 = 40;
+/// Unjudged moves in a row before staff are told (10 s of walking).
+const UNJUDGED_WARN: u32 = 200;
+const UNKNOWN_WORLD: &str = "unloaded chunks";
+const UNCONFIRMED_BLOCKS: &str = "unconfirmed block changes";
+const AWAITING_SETBACK: &str = "awaiting setback";
+const EXEMPT: &str = "exempt";
 
 #[derive(Debug, Default)]
 struct Transactions {
@@ -178,6 +185,13 @@ struct Transactions {
     player_clock_at_least: Option<u64>,
     /// Server tick at the end of which the last answered transaction went out.
     acked_tick: u64,
+}
+
+#[derive(Debug)]
+struct BaselineDoubt {
+    at: Vec3,
+    on_ground: bool,
+    before: Box<Movement>,
 }
 
 #[derive(Debug)]
@@ -206,6 +220,8 @@ struct PacketState {
     sprint_exempt_next: bool,
     no_reminder_ticks: u32,
     received_tick_end: bool,
+    /// A prediction ran since the last tick end.
+    predicted_this_tick: bool,
     flying_packets: u32,
     last_delta_yaw: f32,
     aim_exempt: bool,
@@ -245,9 +261,22 @@ pub struct PlayerData {
     /// Grim's SetBackData.ticksComplete: 0 while a teleport is unaccepted,
     /// 1 for the first movement after the newest teleport was accepted.
     setback_ticks_complete: u32,
+    /// SetBackData.velocity of the last accepted teleport: the velocity an
+    /// engine setback leaves the player with; `None` for other teleports.
+    setback_velocity: Option<Vec3>,
     last_good: Option<Vec3>,
     /// The first teleport (join, respawn) was accepted: movement can be judged.
     spawned: bool,
+    /// The last position the client reported: LocalPlayer.sendPosition's
+    /// baseline, which a teleport does not move.
+    reported: Option<Vec3>,
+    /// The state right after an accepted teleport, until a position is
+    /// reported.
+    after_teleport: Option<Box<Movement>>,
+    /// The tick after a teleport sent no position: the client either stood
+    /// still or stepped exactly back onto its baseline, which it then does not
+    /// report. The state before that tick, to try the second case.
+    baseline_doubt: Option<BaselineDoubt>,
     pending_blocks: PendingBlocks,
     timer: TimerState,
     packets: PacketState,
@@ -265,6 +294,9 @@ pub struct PlayerData {
     pub skipped: u64,
     pub last_offset: f64,
     pub last_skip_reason: Option<&'static str>,
+    /// Predictions in a row not judged, and whether staff were told.
+    pub unjudged_run: u32,
+    unjudged_warned: bool,
     last_timeout_warning: u64,
 }
 
@@ -286,8 +318,12 @@ impl PlayerData {
             awaiting_setback: None,
             setback_requested: 0,
             setback_ticks_complete: 0,
+            setback_velocity: None,
             last_good: None,
             spawned: false,
+            reported: None,
+            after_teleport: None,
+            baseline_doubt: None,
             pending_blocks: PendingBlocks::default(),
             timer: TimerState::default(),
             packets: PacketState {
@@ -305,6 +341,8 @@ impl PlayerData {
             skipped: 0,
             last_offset: 0.0,
             last_skip_reason: None,
+            unjudged_run: 0,
+            unjudged_warned: false,
             last_timeout_warning: 0,
         }
     }
@@ -323,6 +361,29 @@ pub struct Stats {
     pub predictions: u64,
     pub prediction_nanos: u64,
     pub packets: u64,
+    /// Predictions not judged, by reason.
+    pub skipped_unknown_world: u64,
+    pub skipped_unconfirmed_blocks: u64,
+    pub skipped_awaiting_setback: u64,
+    pub skipped_exempt: u64,
+    /// Block changes the integration lost (its outbox was full).
+    pub blocks_lost: u64,
+    /// Block changes past a player's pending limit (kept by section), and
+    /// times the section limit too was reached (every block unknown).
+    pub block_spills: u64,
+    pub block_overflows: u64,
+    /// The most pending positions and sections one player has had.
+    pub peak_pending: usize,
+    /// The longest run of unjudged predictions of one player.
+    pub longest_unjudged: u32,
+}
+
+impl Stats {
+    fn count_pending(&mut self, b: &PendingBlocks, before: (u64, u64)) {
+        self.block_spills += b.spilled - before.0;
+        self.block_overflows += b.overflowed - before.1;
+        self.peak_pending = self.peak_pending.max(b.len());
+    }
 }
 
 pub struct Engine {
@@ -561,8 +622,18 @@ impl Engine {
                 p.awaiting_setback = None;
             }
             Clientbound::Dead(dead) => p.movement.is_dead = dead,
-            Clientbound::BlockChanged(pos) => p.pending_blocks.add(pos, tx.wrapping_add(1)),
-            Clientbound::BlocksUnknown => p.pending_blocks.add_unknown(tx.wrapping_add(1)),
+            Clientbound::BlockChanged(pos) => {
+                let before = (p.pending_blocks.spilled, p.pending_blocks.overflowed);
+                p.pending_blocks.add(pos, tx.wrapping_add(1));
+                self.stats.count_pending(&p.pending_blocks, before);
+            }
+            Clientbound::BlocksUnknownIn(section) => {
+                self.stats.blocks_lost += 1;
+                let before = (p.pending_blocks.spilled, p.pending_blocks.overflowed);
+                p.pending_blocks
+                    .add_unknown_section(section, tx.wrapping_add(1));
+                self.stats.count_pending(&p.pending_blocks, before);
+            }
             Clientbound::Riding(v) => {
                 p.movement.in_vehicle = v.is_some();
                 p.movement.uncertainty.last_flying_status_change.reset();
@@ -593,6 +664,34 @@ impl Engine {
         }
         self.players.insert(key, p);
         verdicts
+    }
+
+    /// Skip metrics, and one staff log line when a player's movement goes
+    /// unjudged for long: suppression must be visible, not silent.
+    fn count_unjudged(&mut self, p: &mut PlayerData, skip: Option<&'static str>) {
+        let s = &mut self.stats;
+        match skip {
+            Some(UNKNOWN_WORLD) => s.skipped_unknown_world += 1,
+            Some(UNCONFIRMED_BLOCKS) => s.skipped_unconfirmed_blocks += 1,
+            Some(AWAITING_SETBACK) => s.skipped_awaiting_setback += 1,
+            Some(_) => s.skipped_exempt += 1,
+            None => {
+                p.unjudged_run = 0;
+                p.unjudged_warned = false;
+                return;
+            }
+        }
+        p.unjudged_run += 1;
+        s.longest_unjudged = s.longest_unjudged.max(p.unjudged_run);
+        if p.unjudged_run >= UNJUDGED_WARN && !p.unjudged_warned && skip != Some(EXEMPT) {
+            p.unjudged_warned = true;
+            self.actions.push(Action::Log(format!(
+                "[Grim] {}'s movement has not been judged for {} moves ({})",
+                p.name,
+                p.unjudged_run,
+                skip.unwrap_or_default()
+            )));
+        }
     }
 
     fn checks_off(&self, p: &PlayerData) -> bool {
@@ -840,6 +939,8 @@ impl Engine {
         p.packets.no_reminder_ticks = 0;
         p.last_good = Some(to);
         p.spawned = true;
+        p.after_teleport = Some(Box::new(p.movement.clone()));
+        p.baseline_doubt = None;
         // SetbackTeleportUtil.checkTeleportQueue: only the newest teleport
         // completes the required setback; a setback superseded by a later
         // teleport is completed by that one. Its own onPredictionComplete
@@ -847,6 +948,7 @@ impl Engine {
         if p.teleports.is_empty() {
             p.awaiting_setback = None;
             p.setback_ticks_complete = 1;
+            p.setback_velocity = t.setback.then_some(velocity);
         }
         // The client's ground flag is not changed by a teleport (Grim keeps
         // packetPlayerOnGround as it was).
@@ -992,6 +1094,8 @@ impl Engine {
 
         if let Some(to) = pos {
             let ground_spoofed = self.on_position(p, to, on_ground, world, now);
+            p.reported = Some(to);
+            p.after_teleport = None;
             if ground_spoofed && modify {
                 verdict = Verdict::SetOnGround(!on_ground);
             }
@@ -1079,6 +1183,24 @@ impl Engine {
             self.flag(p, CheckId::TickTimer, format!("type=end, packets={n}"));
         }
         p.packets.flying_packets = 0;
+        if let Some(mut before) = p.after_teleport.take()
+            && !p.packets.predicted_this_tick
+            && p.spawned
+            && let Some(at) = p.reported
+            && (2.0e-4 * 2.0e-4..1.5 * 1.5).contains(&at.distance_squared(before.position()))
+        {
+            // That tick's input, sprint, sneak and look, from its packets.
+            let m = &p.movement;
+            before.known_input = m.known_input;
+            before.is_sneaking = m.is_sneaking;
+            before.is_sprinting = m.is_sprinting;
+            (before.yaw, before.pitch) = (m.yaw, m.pitch);
+            p.baseline_doubt = Some(BaselineDoubt {
+                at,
+                on_ground: p.movement.packet_on_ground,
+                before,
+            });
+        }
         if !p.movement.did_send_movement_before_tick_end {
             // A tick with no movement packet counts for the timer, and the
             // client updated its pose without telling us.
@@ -1089,8 +1211,13 @@ impl Engine {
             if !m.in_vehicle && p.spawned {
                 prediction::idle_tick(m, world);
             }
+        } else if !p.packets.predicted_this_tick && !p.movement.in_vehicle && p.spawned {
+            // Only a rotation or ground packet: the client ticked without
+            // moving, and its sprint, swimming and pose still advanced.
+            prediction::idle_tick(&mut p.movement, world);
         }
         p.movement.did_send_movement_before_tick_end = false;
+        p.packets.predicted_this_tick = false;
         self.tick_reach(p);
     }
 
@@ -1145,9 +1272,19 @@ impl Engine {
         let awaiting_setback = p.awaiting_setback.is_some();
         let off = self.checks_off(p);
 
-        let disallow_stepping = p.setback_ticks_complete == 1;
+        // Collisions.disallowStepping guards the setback step exploit (a lagging
+        // player reaches the ground, is set back up, and steps). Grim applies it
+        // after every teleport because every server teleport is its required
+        // setback; here only the engine's own setbacks are, so a vanilla player
+        // walking into a slab right after /tp, a respawn or a portal is not
+        // refused the step.
+        let disallow_stepping = p.setback_ticks_complete == 1 && p.setback_velocity.is_some();
         let mut kb = std::mem::take(&mut p.kb);
         let mut ex = std::mem::take(&mut p.explosion);
+        let (kb_before, ex_before) = match &p.baseline_doubt {
+            Some(_) => (kb.clone(), ex.clone()),
+            None => Default::default(),
+        };
         let start = std::time::Instant::now();
         let mut result = {
             let mut cx = self.context(world, &mut kb, &mut ex, disallow_stepping);
@@ -1159,17 +1296,48 @@ impl Engine {
             };
             prediction::check(&mut p.movement, &mut cx, update)
         };
+        // The tick after a teleport sent no position: if standing still does
+        // not explain this move, the client may have stepped back onto its
+        // unreported baseline then. Try that before judging.
+        if let Some(d) = p.baseline_doubt.take()
+            && result.offset >= self.config.simulation.threshold
+        {
+            let (mut alt, mut kb2, mut ex2) = (*d.before, kb_before.clone(), ex_before.clone());
+            let mut cx = self.context(world, &mut kb2, &mut ex2, disallow_stepping);
+            let step =
+                |m: &mut Movement, cx: &mut prediction::Context<'_>, at: Vec3, on_ground: bool| {
+                    (m.last_x, m.last_y, m.last_z) = (m.x, m.y, m.z);
+                    (m.x, m.y, m.z) = (at.x, at.y, at.z);
+                    let update = PositionUpdate {
+                        to: at,
+                        on_ground,
+                        is_teleport: false,
+                        teleport_velocity: None,
+                    };
+                    prediction::check(m, cx, update)
+                };
+            let hidden = step(&mut alt, &mut cx, d.at, d.on_ground);
+            if hidden.offset < self.config.simulation.threshold {
+                prediction::finish(&mut alt, hidden.offset, hidden.checked);
+                let real = step(&mut alt, &mut cx, to, on_ground);
+                if real.offset < result.offset {
+                    p.movement = alt;
+                    (kb, ex) = (kb2, ex2);
+                    result = real;
+                }
+            }
+        }
         self.stats.prediction_nanos += start.elapsed().as_nanos() as u64;
         self.stats.predictions += 1;
 
         let skip = if unknown_world {
-            Some("unloaded chunks")
+            Some(UNKNOWN_WORLD)
         } else if unconfirmed_blocks {
-            Some("unconfirmed block changes")
+            Some(UNCONFIRMED_BLOCKS)
         } else if awaiting_setback {
-            Some("awaiting setback")
+            Some(AWAITING_SETBACK)
         } else if off {
-            Some("exempt")
+            Some(EXEMPT)
         } else {
             None
         };
@@ -1185,11 +1353,13 @@ impl Engine {
         }
 
         p.predictions += 1;
+        p.packets.predicted_this_tick = true;
         p.last_offset = result.offset;
         p.last_skip_reason = result.skipped;
         if !result.checked {
             p.skipped += 1;
         }
+        self.count_unjudged(p, skip);
         self.debug_line(p, &result);
 
         let mut ground_flag = false;
@@ -1278,6 +1448,22 @@ impl Engine {
         // SetbackTeleportUtil: remember where the player last moved legitimately.
         if result.checked && result.offset < self.config.simulation.threshold && !ground_flag {
             p.last_good = Some(to);
+        }
+        // MovementCheckRunner: a jump in the first movement after a setback
+        // needs velocity into the ground to start from, or the setback gave
+        // the player a ground status to jump from in the air: resync.
+        if p.setback_ticks_complete == 1 && result.checked {
+            let m = &mut p.movement;
+            if m.predicted.is_jump()
+                && !m.was_touching_lava
+                && !m.was_touching_water
+                && (p.setback_velocity.is_some_and(|v| v.y >= 0.0)
+                    || !collisions::slow_could_point_three_hit_ground(
+                        m, world, m.last_x, m.last_y, m.last_z,
+                    ))
+            {
+                self.request_setback(p);
+            }
         }
         if p.setback_ticks_complete > 0 {
             p.setback_ticks_complete += 1;

@@ -136,27 +136,17 @@ impl Client {
         );
         let along = |mut v: Vec3, start: Aabb| {
             let mut b = start;
-            for c in &boxes {
-                v.y = c.collide_y(&b, v.y);
-            }
+            v.y = shapes_collide(v.y, &boxes, |c, d| c.collide_y(&b, d));
             b = b.offset(0.0, v.y, 0.0);
             let x_first = v.x.abs() >= v.z.abs();
             if x_first {
-                for c in &boxes {
-                    v.x = c.collide_x(&b, v.x);
-                }
+                v.x = shapes_collide(v.x, &boxes, |c, d| c.collide_x(&b, d));
                 b = b.offset(v.x, 0.0, 0.0);
-                for c in &boxes {
-                    v.z = c.collide_z(&b, v.z);
-                }
+                v.z = shapes_collide(v.z, &boxes, |c, d| c.collide_z(&b, d));
             } else {
-                for c in &boxes {
-                    v.z = c.collide_z(&b, v.z);
-                }
+                v.z = shapes_collide(v.z, &boxes, |c, d| c.collide_z(&b, d));
                 b = b.offset(0.0, 0.0, v.z);
-                for c in &boxes {
-                    v.x = c.collide_x(&b, v.x);
-                }
+                v.x = shapes_collide(v.x, &boxes, |c, d| c.collide_x(&b, d));
             }
             v
         };
@@ -289,6 +279,80 @@ impl Client {
     /// swimming), `LocalPlayer.aiStep` (crouching from last tick's key, the
     /// keys, sprinting, sinking), `LivingEntity.aiStep` (jumping),
     /// `Player.travel` / `LivingEntity.travel`, then `updatePlayerPose`.
+    /// One client tick with these keys, and the packets it sends
+    /// (LocalPlayer.tick: input, sprint command, sendPosition, tick end).
+    pub fn packets(
+        &mut self,
+        world: &TestWorld,
+        keys: Keys,
+        tamper: impl FnOnce(&mut Client),
+    ) -> Vec<Serverbound> {
+        let mut packets = Vec::new();
+        let flags = keys.flags();
+        if flags != self.last_sent_input {
+            packets.push(Serverbound::Input { flags });
+            self.last_sent_input = flags;
+        }
+        self.tick(world, keys);
+        tamper(self);
+        if self.sprinting != self.last_sent_sprint {
+            packets.push(Serverbound::PlayerCommand {
+                action: if self.sprinting { 1 } else { 2 },
+            });
+            self.last_sent_sprint = self.sprinting;
+        }
+        // LocalPlayer.sendPosition.
+        let c = self;
+        c.position_reminder += 1;
+        let d = c.pos.sub(c.last_sent_pos);
+        let moved = d.length_squared() > 2.0e-4 * 2.0e-4 || c.position_reminder >= 20;
+        let turned = (c.yaw, c.pitch) != c.last_sent_rot;
+        let packet = if moved && turned {
+            Some(Serverbound::Move {
+                pos: Some(c.pos),
+                rot: Some((c.yaw, c.pitch)),
+                on_ground: c.on_ground,
+                horizontal_collision: false,
+            })
+        } else if moved {
+            Some(Serverbound::Move {
+                pos: Some(c.pos),
+                rot: None,
+                on_ground: c.on_ground,
+                horizontal_collision: false,
+            })
+        } else if turned {
+            Some(Serverbound::Move {
+                pos: None,
+                rot: Some((c.yaw, c.pitch)),
+                on_ground: c.on_ground,
+                horizontal_collision: false,
+            })
+        } else if c.on_ground != c.last_sent_ground {
+            Some(Serverbound::Move {
+                pos: None,
+                rot: None,
+                on_ground: c.on_ground,
+                horizontal_collision: false,
+            })
+        } else {
+            None
+        };
+        if moved {
+            c.last_sent_pos = c.pos;
+            c.position_reminder = 0;
+        }
+        if turned {
+            c.last_sent_rot = (c.yaw, c.pitch);
+        }
+        if packet.is_some() {
+            c.last_sent_ground = c.on_ground;
+        }
+        packets.extend(packet);
+        packets.push(Serverbound::TickEnd);
+        packets
+    }
+
     pub fn tick(&mut self, world: &TestWorld, keys: Keys) {
         use grim_horizon_engine::world::BlockView;
         // --- Entity.baseTick
@@ -611,6 +675,17 @@ impl Client {
     }
 }
 
+/// `Shapes.collide`: below 1e-7 is no movement once there is a shape.
+fn shapes_collide(mut v: f64, boxes: &[Aabb], collide: impl Fn(&Aabb, f64) -> f64) -> f64 {
+    for c in boxes {
+        if v.abs() < 1.0e-7 {
+            return 0.0;
+        }
+        v = collide(c, v);
+    }
+    v
+}
+
 /// Drives the engine with a client's packets and answers transactions.
 pub struct Harness {
     pub engine: Engine,
@@ -677,7 +752,12 @@ impl Harness {
         );
         self.client.pos = pos;
         self.client.vel = Vec3::ZERO;
-        self.client.last_sent_pos = pos;
+        // No rotation relatives: the client takes the look in the packet,
+        // which is the server's, the last one the client reported (Horizon's
+        // teleport_relative sends the guest's yaw and pitch).
+        (self.client.yaw, self.client.pitch) = self.client.last_sent_rot;
+        // handleMovePlayer leaves LocalPlayer.sendPosition's baseline alone:
+        // the next tick reports the teleported position.
         self.send(vec![Serverbound::AcceptTeleport {
             id,
             pos,
@@ -751,68 +831,7 @@ impl Harness {
             self.pings.pop_front();
             packets.push(Serverbound::Pong { id });
         }
-        let flags = keys.flags();
-        if flags != self.client.last_sent_input {
-            packets.push(Serverbound::Input { flags });
-            self.client.last_sent_input = flags;
-        }
-        self.client.tick(&self.world, keys);
-        tamper(&mut self.client);
-        if self.client.sprinting != self.client.last_sent_sprint {
-            packets.push(Serverbound::PlayerCommand {
-                action: if self.client.sprinting { 1 } else { 2 },
-            });
-            self.client.last_sent_sprint = self.client.sprinting;
-        }
-        // LocalPlayer.sendPosition.
-        let c = &mut self.client;
-        c.position_reminder += 1;
-        let d = c.pos.sub(c.last_sent_pos);
-        let moved = d.length_squared() > 2.0e-4 * 2.0e-4 || c.position_reminder >= 20;
-        let turned = (c.yaw, c.pitch) != c.last_sent_rot;
-        let packet = if moved && turned {
-            Some(Serverbound::Move {
-                pos: Some(c.pos),
-                rot: Some((c.yaw, c.pitch)),
-                on_ground: c.on_ground,
-                horizontal_collision: false,
-            })
-        } else if moved {
-            Some(Serverbound::Move {
-                pos: Some(c.pos),
-                rot: None,
-                on_ground: c.on_ground,
-                horizontal_collision: false,
-            })
-        } else if turned {
-            Some(Serverbound::Move {
-                pos: None,
-                rot: Some((c.yaw, c.pitch)),
-                on_ground: c.on_ground,
-                horizontal_collision: false,
-            })
-        } else if c.on_ground != c.last_sent_ground {
-            Some(Serverbound::Move {
-                pos: None,
-                rot: None,
-                on_ground: c.on_ground,
-                horizontal_collision: false,
-            })
-        } else {
-            None
-        };
-        if moved {
-            c.last_sent_pos = c.pos;
-            c.position_reminder = 0;
-        }
-        if turned {
-            c.last_sent_rot = (c.yaw, c.pitch);
-        }
-        if packet.is_some() {
-            c.last_sent_ground = c.on_ground;
-        }
-        packets.extend(packet);
-        packets.push(Serverbound::TickEnd);
+        packets.extend(self.client.packets(&self.world, keys, tamper));
         packets
     }
 

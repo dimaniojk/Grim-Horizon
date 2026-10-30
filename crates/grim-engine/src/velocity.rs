@@ -53,7 +53,7 @@ pub enum VelocityVerdict {
     },
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct KnockbackHandler {
     first_bread_map: VecDeque<VelocityData>,
     last_known_taken: VecDeque<VelocityData>,
@@ -216,7 +216,7 @@ impl KnockbackHandler {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ExplosionHandler {
     first_bread_map: VecDeque<VelocityData>,
     last_known_taken: Option<VelocityData>,

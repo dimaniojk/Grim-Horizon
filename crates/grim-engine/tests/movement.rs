@@ -522,8 +522,10 @@ fn unreported_block_changes_are_unknown_until_confirmed() {
     // The integration lost which blocks changed (its outbox overflowed):
     // the floor may be gone or not, so nothing is judged until the client
     // answers the next transaction.
-    h.engine
-        .on_outgoing(KEY, grim_horizon_engine::Clientbound::BlocksUnknown);
+    h.engine.on_outgoing(
+        KEY,
+        grim_horizon_engine::Clientbound::BlocksUnknownIn([0, 3, 0]),
+    );
     h.world.remove(0, 63, 0);
     let (_, skipped) = h.checked_predictions();
     h.client_tick(Keys::default(), |c| c.position_reminder = 19);
@@ -532,4 +534,38 @@ fn unreported_block_changes_are_unknown_until_confirmed() {
         h.checked_predictions().1 > skipped,
         "judged against unknown blocks"
     );
+}
+
+#[test]
+fn a_first_step_after_a_teleport_back_onto_the_old_baseline_is_clean() {
+    // How far a client walks in its first tick from rest.
+    let mut probe = Harness::new(flat_world(stone()), SPAWN);
+    for _ in 0..5 {
+        probe.tick(Keys::default());
+    }
+    let from = probe.client.pos;
+    probe.teleport(from);
+    probe.tick(Keys::forward());
+    let step = probe.client.pos.sub(from);
+
+    let mut h = Harness::new(flat_world(stone()), SPAWN);
+    for _ in 0..5 {
+        h.tick(Keys::default());
+    }
+    h.client_tick(Keys::default(), |c| c.position_reminder = 19);
+    // Reported at `here`; put back one step behind it: the first step after
+    // the teleport ends on the position the client last reported, so
+    // LocalPlayer.sendPosition (whose baseline a teleport does not move)
+    // sends no position for it.
+    let here = h.client.last_sent_pos;
+    h.teleport(here.sub(Vec3::new(step.x, 0.0, step.z)));
+    h.tick(Keys::forward());
+    assert!(
+        h.client.pos.distance_squared(here) < 2.0e-4 * 2.0e-4,
+        "the step did not land on the baseline"
+    );
+    for _ in 0..10 {
+        h.tick(Keys::forward());
+    }
+    assert_clean(&h);
 }

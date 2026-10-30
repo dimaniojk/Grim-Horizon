@@ -45,8 +45,8 @@ pub enum Outgoing {
     Login { entity: i32, game_mode: i32 },
     Health(f32),
     Blocks(Vec<[i32; 3]>),
-    /// Block changes dropped because the outbox was full.
-    BlocksLost,
+    /// Block changes in this section dropped because the outbox was full.
+    BlocksLost([i32; 3]),
     Passengers { vehicle: i32, passengers: Vec<i32> },
 }
 
@@ -237,7 +237,7 @@ impl Adapter {
                 }
                 return;
             }
-            Outgoing::BlocksLost => GC::BlocksUnknown,
+            Outgoing::BlocksLost(section) => GC::BlocksUnknownIn(section),
             Outgoing::Passengers { vehicle, passengers } => {
                 let riding = self.riding.entry(conn).or_insert(None);
                 if passengers.contains(&me) {
@@ -761,9 +761,12 @@ pub fn observe_send(sender: &Arc<AtomicUsize>, body: &[u8]) {
     let mut out = OUTBOX.lock().unwrap_or_else(|e| e.into_inner());
     // Drained every tick; the cap only bounds a flood of block updates.
     // Teleports, pings and the like are never dropped (a lost one leaves the
-    // player unjudged), and lost block changes leave every block unknown.
+    // player unjudged), and lost block changes leave their section unknown.
     let o = match o {
-        Outgoing::Blocks(_) if out.len() >= 1 << 16 => Outgoing::BlocksLost,
+        Outgoing::Blocks(list) if out.len() >= 1 << 16 => match list.first() {
+            Some(p) => Outgoing::BlocksLost(p.map(|c| c >> 4)),
+            None => return,
+        },
         o => o,
     };
     out.push((sender.clone(), o));

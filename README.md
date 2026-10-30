@@ -14,7 +14,7 @@ it to.
 
 | Document | |
 |---|---|
-| [BUILD.md](BUILD.md) | Build, install, commands, smoke test |
+| [BUILD.md](BUILD.md) | Build, install, commands, live test |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the engine and the Horizon hooks fit together |
 | [COMPATIBILITY.md](COMPATIBILITY.md) | Upstream commits, Horizon's integration points, why horizon-mixins |
 | [PORT_STATUS.md](PORT_STATUS.md) | Every Grim check: implemented, tested, verified, missing |
@@ -29,7 +29,8 @@ crates/grim-engine/            the engine (GPL-3.0-or-later), no Horizon types
   examples/bench.rs            benchmark
 integration/horizon/grim-horizon/   horizon-mixins bundle: hooks + adapter
 tools/build_server.py          reproducible server build
-tools/smoke_test.py            end-to-end test on a real server
+tools/smoke_test.py            end-to-end test on a real server (needs your game files)
+tools/grim-bot/                the test's protocol player (vanilla-model movement)
 configs/grim-horizon.toml      default configuration
 ```
 

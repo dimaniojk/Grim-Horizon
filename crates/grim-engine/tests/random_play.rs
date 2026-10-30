@@ -101,6 +101,13 @@ fn play_debug(seed: u64, ticks: usize, debug: bool) -> Harness {
                 ));
             }
             h.teleport(Vec3::new(0.5, 66.0, 0.5));
+            if debug {
+                let m = &h.engine.player(common::KEY).unwrap().movement;
+                trail.push_back(format!(
+                    "AFTER TP client yaw {} engine yaw {} last {}",
+                    h.client.yaw, m.yaw, m.last_yaw
+                ));
+            }
             continue;
         }
         let before = (h.client.clone(), h.flags.len());
@@ -117,7 +124,14 @@ fn play_debug(seed: u64, ticks: usize, debug: bool) -> Harness {
                 println!("  TRAIL {t}");
             }
             let m = &h.engine.player(common::KEY).unwrap().movement;
-            println!("FLAG {:?} keys {:?}", &h.flags[before.1..], keys);
+            println!(
+                "FLAG {:?} keys {:?} client yaw {} before {} sent {:?}",
+                &h.flags[before.1..],
+                keys,
+                h.client.yaw,
+                before.0.yaw,
+                before.0.last_sent_rot
+            );
             println!(
                 "  before pos {:?} vel {:?} ground {} sprint {} sneak {} water {} support {:?} last_move {:?}",
                 before.0.pos,
@@ -198,6 +212,52 @@ fn random_legit_play_never_flags() {
             h.flags.is_empty(),
             "seed {seed}: {:?}",
             &h.flags[..h.flags.len().min(8)]
+        );
+    }
+}
+
+/// Seeds that flagged legitimate play, each for its own reason; all fixed.
+#[test]
+fn former_false_positive_seeds_are_clean() {
+    for (seed, cause) in [
+        (
+            236,
+            "teleport while sprinting: the client took the server's look",
+        ),
+        (
+            266,
+            "teleport while sneaking: the next tick reports its position",
+        ),
+        (
+            110,
+            "sneaking against a slab wall: 1e-7 wall seeking stepped up",
+        ),
+        (
+            216,
+            "sneak edge lenience cut the movement, then velocity was wrong",
+        ),
+        (
+            274,
+            "sneak edge lenience cut the movement, then velocity was wrong",
+        ),
+        (
+            142,
+            "sprint started on a rotation-only tick: swimming one tick late",
+        ),
+        (
+            171,
+            "a tick with only a rotation packet did not advance state",
+        ),
+        (
+            287,
+            "a tick with only a rotation packet did not advance state",
+        ),
+    ] {
+        let h = play(seed, 6000);
+        assert!(
+            h.flags.is_empty(),
+            "seed {seed} ({cause}): {:?}",
+            &h.flags[..h.flags.len().min(4)]
         );
     }
 }

@@ -1,0 +1,15 @@
+[package]
+name = "grim-bot"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+description = "A vanilla-model player for Grim-Horizon's end-to-end test (tools/smoke_test.py)"
+
+# Built against the Horizon checkout next to this repository (the server's
+# pinned commit, see COMPATIBILITY.md).
+[dependencies]
+horizon-protocol = { path = "../../../upstream/horizon/crates/horizon-protocol" }
+grim-horizon-engine = { path = "../../crates/grim-engine" }
+
+[workspace]

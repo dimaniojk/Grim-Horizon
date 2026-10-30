@@ -49,7 +49,6 @@ fn send_teleport(h: &mut Harness, pos: Vec3) -> i32 {
 fn accept(h: &mut Harness, id: i32, pos: Vec3) {
     h.client.pos = pos;
     h.client.vel = Vec3::ZERO;
-    h.client.last_sent_pos = pos;
     let rot = (h.client.yaw, h.client.pitch);
     h.send(vec![Serverbound::AcceptTeleport { id, pos, rot }]);
 }
@@ -105,7 +104,9 @@ fn stale_setback_ack_does_not_end_the_setback() {
     // moves until it is accepted are not where the server put the player.
     accept(&mut h, setback, to);
     let (_, skipped) = h.checked_predictions();
-    h.client_tick(Keys::forward(), |c| c.pos.z += 0.3);
+    // (0.5, not the 0.3 that got the setback: that lands on the position the
+    // client last reported, so it would send nothing.)
+    h.client_tick(Keys::forward(), |c| c.pos.z += 0.5);
     assert!(
         h.checked_predictions().1 > skipped,
         "judged before the newest teleport"
@@ -170,18 +171,32 @@ fn slab_harness() -> Harness {
 
 #[test]
 fn first_move_after_a_completed_setback_may_not_step() {
-    let mut h = slab_harness();
-    // Put back 0.01 in front of the slab: the first walking tick (0.02 from
-    // rest) runs into it and a vanilla client steps up.
-    h.teleport(Vec3::new(0.5, 64.0, 2.69));
+    let mut h = slab_harness().with_config(|c| c.mode = Mode::Setback);
+    // Last good position 0.01 in front of the slab: the first walking tick
+    // (0.02 from rest) runs into it and a vanilla client steps up.
+    let spot = Vec3::new(0.5, 64.0, 2.69);
+    h.teleport(spot);
+    h.client_tick(Keys::default(), |c| c.pos.z -= 0.5);
+    let to = h
+        .actions
+        .iter()
+        .find_map(|a| match a {
+            Action::Setback { key: KEY, pos } => Some(*pos),
+            _ => None,
+        })
+        .expect("set back");
+    assert!(to.distance_squared(spot) < 1e-9, "set back to {to:?}");
+    let id = send_teleport(&mut h, to);
+    accept(&mut h, id, to);
+    h.client.on_ground = true;
+    let flags = h.flags.len();
     h.tick(Keys::forward());
     assert!(
         h.client.pos.y > 64.4,
         "the client did not step: {}",
         h.client.pos.y
     );
-    let offset: f64 = h
-        .flags
+    let offset: f64 = h.flags[flags..]
         .iter()
         .find(|(c, _)| *c == CheckId::Simulation)
         .map_or(0.0, |(_, v)| v.parse().unwrap());
@@ -194,10 +209,22 @@ fn first_move_after_a_completed_setback_may_not_step() {
 }
 
 #[test]
-fn stepping_on_later_moves_after_a_setback_is_clean() {
+fn stepping_right_after_a_plain_teleport_is_clean() {
     let mut h = slab_harness();
-    // Put back further away: the first moves are plain walking, the step
-    // comes later and is allowed again.
+    h.teleport(Vec3::new(0.5, 64.0, 2.69));
+    h.tick(Keys::forward());
+    assert!(
+        h.client.pos.y > 64.4,
+        "the client did not step: {}",
+        h.client.pos.y
+    );
+    assert!(h.flags.is_empty(), "{:?}", h.flags);
+}
+
+#[test]
+fn stepping_on_later_moves_after_a_teleport_is_clean() {
+    let mut h = slab_harness();
+    // Further away: the first moves are plain walking, the step comes later.
     h.teleport(Vec3::new(0.5, 64.0, 2.3));
     for _ in 0..8 {
         h.tick(Keys::forward());
@@ -207,5 +234,51 @@ fn stepping_on_later_moves_after_a_setback_is_clean() {
         "the client did not step: {}",
         h.client.pos.y
     );
+    assert!(h.flags.is_empty(), "{:?}", h.flags);
+}
+
+fn setbacks(h: &Harness) -> usize {
+    h.actions
+        .iter()
+        .filter(|a| matches!(a, Action::Setback { key: KEY, .. }))
+        .count()
+}
+
+#[test]
+fn jumping_right_after_a_setback_is_resynced() {
+    let mut h = setback_harness();
+    for _ in 0..5 {
+        h.tick(Keys::default());
+    }
+    let to = cheat_until_setback(&mut h);
+    let id = send_teleport(&mut h, to);
+    accept(&mut h, id, to);
+    let before = setbacks(&h);
+    let flags = h.flags.len();
+    // The setback left no velocity into the ground to jump from (Grim's
+    // LiquidBounce Jesus / AirJump fix): put back again, without a flag.
+    h.tick(Keys {
+        jump: true,
+        ..Keys::default()
+    });
+    assert_eq!(setbacks(&h), before + 1, "{:?}", h.flags);
+    assert_eq!(h.flags.len(), flags, "a resync is not a violation");
+}
+
+#[test]
+fn jumping_right_after_a_plain_teleport_onto_the_ground_is_not_resynced() {
+    let mut h = setback_harness();
+    for _ in 0..5 {
+        h.tick(Keys::default());
+    }
+    h.teleport(Vec3::new(5.5, 64.0, 5.5));
+    h.tick(Keys {
+        jump: true,
+        ..Keys::default()
+    });
+    for _ in 0..10 {
+        h.tick(Keys::default());
+    }
+    assert_eq!(setbacks(&h), 0, "{:?}", h.flags);
     assert!(h.flags.is_empty(), "{:?}", h.flags);
 }

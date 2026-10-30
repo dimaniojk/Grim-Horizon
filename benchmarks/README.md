@@ -46,3 +46,41 @@ time per server tick for all players; alerts 0 in every run.
 2,000 changes per player per tick is above a large TNT blast; 100 players at
 that rate still take 19 ms of a 50 ms tick, so heavy block churn remains the
 engine's most expensive load.
+
+## Load and stability
+
+`cargo run --release --example bench_load`: one engine, vanilla-model
+players (the test suite's client) walking, jumping, sprinting and sneaking at
+random near their homes for 1,200 ticks, with the stresses below. Times are
+engine work per server tick (all `on_incoming`, `on_outgoing` and `end_tick`
+calls), measured 2026-10-30 on an Apple M1. **This is engine time only**: a
+real server tick adds Horizon's own work (the world, chunks, network), which
+only a live run measures (Horizon's `horizon-server status` reports MSPT);
+none has run yet. Heap per player is live heap divided by players, so the
+10-player row carries the engine's fixed tables.
+
+| Scenario | Players | avg ms | p95 ms | p99 ms | Heap/player | Alerts on legit players | Moves not judged (blocks / chunks) | Longest unjudged run | Peak pending | Spilled / overflowed |
+|---|---|---|---|---|---|---|---|---|---|---|
+| walking | 10 | 0.103 | 0.188 | 0.232 | 32.7 KB | 0 | 0 / 0 | 0 | 0 | 0 / 0 |
+| walking | 50 | 0.525 | 0.668 | 0.713 | 5.7 KB | 0 | 0 / 0 | 0 | 0 | 0 / 0 |
+| walking | 100 | 1.072 | 1.273 | 1.385 | 5.6 KB | 0 | 0 / 0 | 0 | 0 | 0 / 0 |
+| TNT: 2,000 changes per player per tick, 30 blocks away | 100 | 12.269 | 13.497 | 13.981 | 73.6 KB | 0 | 0 / 0 | 0 | 2,160 | 0 / 0 |
+| every player teleported every 100 ticks | 100 | 1.052 | 1.248 | 1.314 | 5.6 KB | 0 | 0 / 0 | 0 | 0 | 0 / 0 |
+| reconnection storm: 20 % leave and rejoin every 60 ticks | 100 | 1.051 | 1.245 | 1.330 | 8.1 KB | 0 | 0 / 0 | 0 | 0 | 0 / 0 |
+| network jitter: pongs 1-8 ticks late, packets held up to 3 ticks | 100 | 1.069 | 1.312 | 1.437 | 6.0 KB | 0 | 0 / 0 | 0 | 0 | 0 / 0 |
+| a block beside every player changing every 5 ticks | 100 | 1.070 | 1.270 | 1.352 | 5.7 KB | 0 | 22,614 / 0 | 3 | 1 | 0 / 0 |
+| all of the above at once | 100 | 11.633 | 13.350 | 14.150 | 76.3 KB | 0 | 96,738 / 0 | 116 | 2,163 | 0 / 0 |
+
+Read with care:
+
+* The changing block beside each player is the fail-open case: those moves
+  are not judged. Under jitter a player went 116 moves in a row unjudged;
+  past 200 the engine logs it once.
+* No update was dropped or spilled here: 2,000 changes a tick stay under the
+  4,096-position limit because each is confirmed within a few ticks.
+* The first version of this benchmark found two problems in the benchmark
+  itself (yaw snapped across 180 degrees, which AimModulo360 rightly flagged;
+  teleports accepted out of order with held packets) and one engine false
+  positive (the unreported first step after a teleport, now fixed).
+* Standing now costs 3.3 µs per player-tick (was 1.8): ticks without a
+  position advance sprint, swimming and pose, as the client does.

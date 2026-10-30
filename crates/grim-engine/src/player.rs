@@ -752,6 +752,9 @@ pub struct Movement {
     pub max_attack_slow: i32,
     /// `SneakingEstimator.sneakingPotentialHiddenVelocity`.
     pub sneaking_hidden: Aabb,
+    /// The chosen input's velocity before the hidden-sneak lenience cut it
+    /// to the movement seen, when it did.
+    pub hidden_cut_from: Option<Vec3>,
     /// The inputs tried in the last prediction (`storePossibleVelocities`).
     pub last_possible: Vec<VectorData>,
 }
@@ -842,6 +845,7 @@ impl Default for Movement {
             min_attack_slow: 0,
             max_attack_slow: 0,
             sneaking_hidden: Aabb::default(),
+            hidden_cut_from: None,
             last_possible: Vec::new(),
         }
     }

@@ -183,6 +183,18 @@ impl Engine {
                     s.predictions,
                     avg
                 ))
+                .line(format!(
+                    "not judged: {} unloaded chunks, {} unconfirmed blocks, {} awaiting setback, {} exempt; longest run {}",
+                    s.skipped_unknown_world,
+                    s.skipped_unconfirmed_blocks,
+                    s.skipped_awaiting_setback,
+                    s.skipped_exempt,
+                    s.longest_unjudged
+                ))
+                .line(format!(
+                    "block changes: {} lost by the server hook, {} kept by section, {} made everything unknown; peak pending {}",
+                    s.blocks_lost, s.block_spills, s.block_overflows, s.peak_pending
+                ))
             }
             "reload" => CommandOutcome {
                 lines: Vec::new(),

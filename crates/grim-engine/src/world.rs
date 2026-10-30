@@ -174,14 +174,21 @@ impl dyn BlockView + '_ {
 pub struct PendingBlocks {
     /// Position -> the transaction that confirms it.
     entries: std::collections::HashMap<[i32; 3], u32>,
-    /// Set when changes were not recorded because the map was full: until
-    /// the client answers this transaction, every block counts as unknown.
+    /// Changes past `LIMIT`, or not reported at all, by 16x16x16 section:
+    /// every block of the section is unknown until its transaction.
+    sections: std::collections::HashMap<[i32; 3], u32>,
+    /// Set only when the sections are full too: every block is unknown.
     overflow: Option<u32>,
+    /// Changes that fell back to section and to world granularity.
+    pub spilled: u64,
+    pub overflowed: u64,
 }
 
 impl PendingBlocks {
-    /// Hard cap so a flood of block updates cannot grow memory without bound.
+    /// Hard caps so a flood of block updates cannot grow memory without bound
+    /// (about 100 KB per player at most).
     pub const LIMIT: usize = 4096;
+    pub const SECTION_LIMIT: usize = 1024;
 
     pub fn add(&mut self, pos: [i32; 3], confirm_by: u32) {
         if let Some(e) = self.entries.get_mut(&pos) {
@@ -189,32 +196,43 @@ impl PendingBlocks {
         } else if self.entries.len() < Self::LIMIT {
             self.entries.insert(pos, confirm_by);
         } else {
-            // Dropping a change would treat it as confirmed; mark everything
-            // unknown instead until it is.
-            self.add_unknown(confirm_by);
+            // Dropping a change would treat it as confirmed; the section it is
+            // in counts as unknown instead.
+            self.spilled += 1;
+            self.add_unknown_section(pos.map(|c| c >> 4), confirm_by);
         }
     }
-    /// Changes were sent that are not known: every block is unconfirmed
-    /// until `confirm_by`.
-    pub fn add_unknown(&mut self, confirm_by: u32) {
-        self.overflow = Some(self.overflow.map_or(confirm_by, |o| o.max(confirm_by)));
+    /// Changes in `section` were sent that are not known: all of its blocks
+    /// are unconfirmed until `confirm_by`.
+    pub fn add_unknown_section(&mut self, section: [i32; 3], confirm_by: u32) {
+        if let Some(e) = self.sections.get_mut(&section) {
+            *e = (*e).max(confirm_by);
+        } else if self.sections.len() < Self::SECTION_LIMIT {
+            self.sections.insert(section, confirm_by);
+        } else {
+            self.overflowed += 1;
+            self.overflow = Some(self.overflow.map_or(confirm_by, |o| o.max(confirm_by)));
+        }
     }
     /// The client answered transaction `acked`: changes sent before it are
     /// now known to have reached it.
     pub fn confirm(&mut self, acked: u32) {
         self.entries.retain(|_, c| *c > acked);
+        self.sections.retain(|_, c| *c > acked);
         if self.overflow.is_some_and(|o| o <= acked) {
             self.overflow = None;
         }
     }
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty() && self.overflow.is_none()
+        self.entries.is_empty() && self.sections.is_empty() && self.overflow.is_none()
     }
+    /// Positions and sections waiting.
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.entries.len() + self.sections.len()
     }
     pub fn clear(&mut self) {
         self.entries.clear();
+        self.sections.clear();
         self.overflow = None;
     }
     /// Whether any unconfirmed block lies within `area` (grown by one block
@@ -222,9 +240,6 @@ impl PendingBlocks {
     pub fn touches(&self, area: Aabb) -> bool {
         if self.overflow.is_some() {
             return true;
-        }
-        if self.entries.is_empty() {
-            return false;
         }
         let (x0, y0, z0) = (
             floor(area.min_x) - 1,
@@ -236,17 +251,35 @@ impl PendingBlocks {
             floor(area.max_y) + 1,
             floor(area.max_z) + 1,
         );
-        let cells = i64::from(x1 - x0 + 1) * i64::from(y1 - y0 + 1) * i64::from(z1 - z0 + 1);
-        // Look up the area's cells, or scan the map when it is the smaller.
-        if cells <= self.entries.len() as i64 {
-            (x0..=x1).any(|x| {
-                (y0..=y1).any(|y| (z0..=z1).any(|z| self.entries.contains_key(&[x, y, z])))
-            })
-        } else {
-            self.entries.keys().any(|p| {
-                (x0..=x1).contains(&p[0]) && (y0..=y1).contains(&p[1]) && (z0..=z1).contains(&p[2])
-            })
+        let s0 = [x0 >> 4, y0 >> 4, z0 >> 4];
+        let s1 = [x1 >> 4, y1 >> 4, z1 >> 4];
+        if lookup_or_scan(&self.sections, s0, s1) {
+            return true;
         }
+        lookup_or_scan(&self.entries, [x0, y0, z0], [x1, y1, z1])
+    }
+}
+
+/// Whether `map` has a key in the box `lo..=hi`: looks up the box's cells, or
+/// scans the map when it is the smaller (a huge claimed move must not cost
+/// more than the map).
+fn lookup_or_scan(
+    map: &std::collections::HashMap<[i32; 3], u32>,
+    lo: [i32; 3],
+    hi: [i32; 3],
+) -> bool {
+    if map.is_empty() {
+        return false;
+    }
+    let cells = (0..3)
+        .map(|i| i64::from(hi[i]) - i64::from(lo[i]) + 1)
+        .product::<i64>();
+    if cells <= map.len() as i64 {
+        (lo[0]..=hi[0])
+            .any(|x| (lo[1]..=hi[1]).any(|y| (lo[2]..=hi[2]).any(|z| map.contains_key(&[x, y, z]))))
+    } else {
+        map.keys()
+            .any(|p| (0..3).all(|i| (lo[i]..=hi[i]).contains(&p[i])))
     }
 }
 
@@ -417,14 +450,46 @@ mod tests {
         for i in 0..PendingBlocks::LIMIT as i32 {
             p.add([i, 0, 0], 3);
         }
-        // One change too many, far away: nothing may count as confirmed.
-        p.add([1_000_000, 0, 0], 7);
+        // One change too many: its section is unknown, nothing else.
+        p.add([1_000_000, 70, 5], 7);
+        assert_eq!(p.spilled, 1);
+        let same_section = Aabb::new(1_000_008.5, 66.0, 1.5, 1_000_009.1, 67.8, 2.1);
+        let far = Aabb::new(-500.0, 100.0, -500.0, -499.0, 101.0, -499.0);
+        assert!(p.touches(same_section));
+        assert!(!p.touches(far));
+        p.confirm(6);
+        assert!(
+            p.touches(same_section),
+            "the spilled change is still unconfirmed"
+        );
+        p.confirm(7);
+        assert!(!p.touches(same_section) && p.is_empty());
+    }
+
+    #[test]
+    fn pending_blocks_full_sections_make_everything_unknown_until_confirmed() {
+        let mut p = PendingBlocks::default();
+        for i in 0..PendingBlocks::SECTION_LIMIT as i32 {
+            p.add_unknown_section([i, 0, 0], 2);
+        }
+        p.add_unknown_section([-50, 0, 0], 4);
+        assert_eq!(p.overflowed, 1);
         let far = Aabb::new(-500.0, 100.0, -500.0, -499.0, 101.0, -499.0);
         assert!(p.touches(far));
-        p.confirm(6);
-        assert!(p.touches(far), "the dropped change is still unconfirmed");
-        p.confirm(7);
+        p.confirm(4);
         assert!(!p.touches(far) && p.is_empty());
+    }
+
+    #[test]
+    fn pending_blocks_huge_claimed_moves_cost_no_more_than_the_map() {
+        let mut p = PendingBlocks::default();
+        p.add_unknown_section([5, 4, 5], 1);
+        p.add([3, 64, 3], 1);
+        // A claimed move across the world: a scan, not 10^13 lookups.
+        let huge = Aabb::new(-3.0e7, -64.0, -3.0e7, 3.0e7, 320.0, 3.0e7);
+        let t = std::time::Instant::now();
+        assert!(p.touches(huge));
+        assert!(t.elapsed().as_millis() < 50);
     }
 
     #[test]

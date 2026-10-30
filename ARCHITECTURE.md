@@ -71,6 +71,25 @@ authoritative world and compensates instead:
 * chunks count as loaded only when the server has them *and* has sent them to
   the player (`Guest::sent_chunks`); movement in other chunks is not judged.
 
+Pending changes are kept by position up to 4,096 per player, then by
+16x16x16 section up to 1,024, and only then as "every block unknown"; all of
+them until the client confirms. A change the send hook could not record (its
+outbox past 65,536 entries a tick) makes its section unknown
+(`Clientbound::BlocksUnknownIn`); teleports, pings and the other packets the
+engine needs are never dropped. `grim stats` counts every move not judged and
+why, and the engine logs a player left unjudged for 200 moves in a row.
+
+### The Horizon side, packet by packet
+
+* The send hook knows a sender only by its `PlayerSender` (`routing.rs`):
+  the adapter keeps a strong reference to each one it maps or buffers for, so
+  a closed connection's address cannot be reused while it is known; the join
+  burst is buffered until the player is registered.
+* The inbox hook reads only packets the engine has not seen. Horizon pops at
+  most 400 a tick and may stop early; what is left was seen. The count is
+  reset in `inbox_done` for every guest read that tick, by connection, since
+  a guest may have changed level in between.
+
 ### Prediction
 
 A faithful port of Grim's 26.3 path: start vectors (carried velocity,
@@ -106,12 +125,24 @@ All hooks run on Horizon's server thread. The engine is behind one mutex
 adapter may call `Hub::teleport` or `Guest::send` while it holds the engine.
 Nothing blocks: no I/O on the tick path except `/grim reload`. Per-player
 state is bounded: queues are capped (velocities 64, unanswered transactions
-1200, pending block changes 4096, entity history 40 ticks per level).
+1200, pending block changes 4,096 positions and 1,024 sections, entity
+history 40 ticks per level); about 6 KB of heap per player while walking,
+75 KB under TNT-scale block changes.
 
 Measured cost (benchmarks/README.md): about 6-10 µs per predicted movement and
-0.8 ms of engine work per server tick for 100 players moving every tick, on an
-Apple M1, against the in-memory test world (Horizon's collision scan will add
-to this; not yet measured live).
+about 1 ms of engine work per server tick for 100 players (1.4 ms p99), 12-14
+ms with 2,000 block changes per player per tick, on an Apple M1, against the
+in-memory test world (Horizon's collision scan will add to this; not yet
+measured live).
+
+## Testing on a real server
+
+`tools/grim-bot` is a protocol client that moves with the engine tests'
+vanilla-model client; `tools/smoke_test.py` runs a scratch Horizon server on a
+superflat world and checks joining, legit play, cheats, staff alerts,
+teleports, respawn, dimension changes, setbacks, kicks and reconnects against
+it (BUILD.md, section 5). It needs Minecraft 26.3 game files and the EULA
+decision, so it has not run here.
 
 ## Why one engine crate
 
