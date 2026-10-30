@@ -125,6 +125,8 @@ pub enum Clientbound {
     Dead(bool),
     /// A block the client will change when it handles this packet.
     BlockChanged([i32; 3]),
+    /// Block changes were sent that the integration could not report.
+    BlocksUnknown,
     /// The player started (`Some(vehicle)`) or stopped riding.
     Riding(Option<i32>),
     /// Sleeping in a bed or not.
@@ -161,6 +163,8 @@ pub enum Verdict {
 /// Our transaction ids carry this bit, so pongs for anyone else's pings are
 /// told apart.
 pub const PING_MARK: i32 = 1 << 30;
+/// Server ticks a requested setback may go without its teleport being sent.
+const SETBACK_SEND_TICKS: u64 = 40;
 
 #[derive(Debug, Default)]
 struct Transactions {
@@ -232,9 +236,14 @@ pub struct PlayerData {
     explosion: ExplosionHandler,
     tx: Transactions,
     teleports: VecDeque<PendingTeleport>,
-    /// A setback the engine asked for and the client has not accepted yet.
+    /// A setback the engine asked for: movement is not judged until the
+    /// client accepts the newest teleport sent since (Grim's requiredSetBack,
+    /// which every server teleport replaces).
     awaiting_setback: Option<Vec3>,
-    /// Setback ticks complete: 1 right after a setback was accepted.
+    /// Engine tick the setback was asked for.
+    setback_requested: u64,
+    /// Grim's SetBackData.ticksComplete: 0 while a teleport is unaccepted,
+    /// 1 for the first movement after the newest teleport was accepted.
     setback_ticks_complete: u32,
     last_good: Option<Vec3>,
     /// The first teleport (join, respawn) was accepted: movement can be judged.
@@ -275,6 +284,7 @@ impl PlayerData {
             tx: Transactions::default(),
             teleports: VecDeque::new(),
             awaiting_setback: None,
+            setback_requested: 0,
             setback_ticks_complete: 0,
             last_good: None,
             spawned: false,
@@ -456,6 +466,18 @@ impl Engine {
                     )));
                 }
             }
+            // A setback whose teleport the server never sent (the player was
+            // gone from the level, say) must not stop checks for good.
+            if p.awaiting_setback.is_some()
+                && !p.teleports.iter().any(|t| t.setback)
+                && tick.saturating_sub(p.setback_requested) > SETBACK_SEND_TICKS
+            {
+                p.awaiting_setback = None;
+                self.actions.push(Action::Log(format!(
+                    "[Grim] the setback for {} was never sent; judging again",
+                    p.name
+                )));
+            }
         }
         self.tick += 1;
     }
@@ -494,6 +516,7 @@ impl Engine {
                     relatives,
                     setback,
                 });
+                p.setback_ticks_complete = 0;
             }
             Clientbound::Attribute {
                 attr,
@@ -534,9 +557,12 @@ impl Engine {
                 p.kb.clear();
                 p.explosion.clear();
                 p.packets.no_reminder_ticks = 0;
+                // The spawn teleport that follows supersedes any setback.
+                p.awaiting_setback = None;
             }
             Clientbound::Dead(dead) => p.movement.is_dead = dead,
             Clientbound::BlockChanged(pos) => p.pending_blocks.add(pos, tx.wrapping_add(1)),
+            Clientbound::BlocksUnknown => p.pending_blocks.add_unknown(tx.wrapping_add(1)),
             Clientbound::Riding(v) => {
                 p.movement.in_vehicle = v.is_some();
                 p.movement.uncertainty.last_flying_status_change.reset();
@@ -814,12 +840,13 @@ impl Engine {
         p.packets.no_reminder_ticks = 0;
         p.last_good = Some(to);
         p.spawned = true;
-        if t.setback
-            || p.awaiting_setback
-                .is_some_and(|s| s.distance_squared(to) < 1e-6)
-        {
+        // SetbackTeleportUtil.checkTeleportQueue: only the newest teleport
+        // completes the required setback; a setback superseded by a later
+        // teleport is completed by that one. Its own onPredictionComplete
+        // ticks it to 1, so the next movement may not step.
+        if p.teleports.is_empty() {
             p.awaiting_setback = None;
-            p.setback_ticks_complete = 0;
+            p.setback_ticks_complete = 1;
         }
         // The client's ground flag is not changed by a teleport (Grim keeps
         // packetPlayerOnGround as it was).
@@ -1413,7 +1440,8 @@ impl Engine {
             return;
         };
         p.awaiting_setback = Some(pos);
-        p.setback_ticks_complete = 1;
+        p.setback_requested = self.tick;
+        p.setback_ticks_complete = 0;
         self.actions.push(Action::Setback { key: p.key, pos });
     }
 

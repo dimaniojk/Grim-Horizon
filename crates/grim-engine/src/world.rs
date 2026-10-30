@@ -172,8 +172,11 @@ impl dyn BlockView + '_ {
 /// world copy we keep the positions and refuse to judge movement near them.
 #[derive(Debug, Default)]
 pub struct PendingBlocks {
-    /// (x, y, z, transaction that confirms it).
-    entries: Vec<([i32; 3], u32)>,
+    /// Position -> the transaction that confirms it.
+    entries: std::collections::HashMap<[i32; 3], u32>,
+    /// Set when changes were not recorded because the map was full: until
+    /// the client answers this transaction, every block counts as unknown.
+    overflow: Option<u32>,
 }
 
 impl PendingBlocks {
@@ -181,32 +184,45 @@ impl PendingBlocks {
     pub const LIMIT: usize = 4096;
 
     pub fn add(&mut self, pos: [i32; 3], confirm_by: u32) {
-        if let Some(e) = self.entries.iter_mut().find(|e| e.0 == pos) {
-            e.1 = e.1.max(confirm_by);
-            return;
+        if let Some(e) = self.entries.get_mut(&pos) {
+            *e = (*e).max(confirm_by);
+        } else if self.entries.len() < Self::LIMIT {
+            self.entries.insert(pos, confirm_by);
+        } else {
+            // Dropping a change would treat it as confirmed; mark everything
+            // unknown instead until it is.
+            self.add_unknown(confirm_by);
         }
-        if self.entries.len() >= Self::LIMIT {
-            self.entries.remove(0);
-        }
-        self.entries.push((pos, confirm_by));
+    }
+    /// Changes were sent that are not known: every block is unconfirmed
+    /// until `confirm_by`.
+    pub fn add_unknown(&mut self, confirm_by: u32) {
+        self.overflow = Some(self.overflow.map_or(confirm_by, |o| o.max(confirm_by)));
     }
     /// The client answered transaction `acked`: changes sent before it are
     /// now known to have reached it.
     pub fn confirm(&mut self, acked: u32) {
-        self.entries.retain(|e| e.1 > acked);
+        self.entries.retain(|_, c| *c > acked);
+        if self.overflow.is_some_and(|o| o <= acked) {
+            self.overflow = None;
+        }
     }
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.entries.is_empty() && self.overflow.is_none()
     }
     pub fn len(&self) -> usize {
         self.entries.len()
     }
     pub fn clear(&mut self) {
         self.entries.clear();
+        self.overflow = None;
     }
     /// Whether any unconfirmed block lies within `area` (grown by one block
     /// so a changed neighbour's shape counts too).
     pub fn touches(&self, area: Aabb) -> bool {
+        if self.overflow.is_some() {
+            return true;
+        }
         if self.entries.is_empty() {
             return false;
         }
@@ -220,9 +236,17 @@ impl PendingBlocks {
             floor(area.max_y) + 1,
             floor(area.max_z) + 1,
         );
-        self.entries.iter().any(|(p, _)| {
-            (x0..=x1).contains(&p[0]) && (y0..=y1).contains(&p[1]) && (z0..=z1).contains(&p[2])
-        })
+        let cells = i64::from(x1 - x0 + 1) * i64::from(y1 - y0 + 1) * i64::from(z1 - z0 + 1);
+        // Look up the area's cells, or scan the map when it is the smaller.
+        if cells <= self.entries.len() as i64 {
+            (x0..=x1).any(|x| {
+                (y0..=y1).any(|y| (z0..=z1).any(|z| self.entries.contains_key(&[x, y, z])))
+            })
+        } else {
+            self.entries.keys().any(|p| {
+                (x0..=x1).contains(&p[0]) && (y0..=y1).contains(&p[1]) && (z0..=z1).contains(&p[2])
+            })
+        }
     }
 }
 
@@ -384,6 +408,37 @@ mod tests {
         p.confirm(9);
         assert_eq!(p.len(), 1);
         p.confirm(10);
+        assert!(p.is_empty());
+    }
+
+    #[test]
+    fn pending_blocks_overflow_is_unknown_until_confirmed() {
+        let mut p = PendingBlocks::default();
+        for i in 0..PendingBlocks::LIMIT as i32 {
+            p.add([i, 0, 0], 3);
+        }
+        // One change too many, far away: nothing may count as confirmed.
+        p.add([1_000_000, 0, 0], 7);
+        let far = Aabb::new(-500.0, 100.0, -500.0, -499.0, 101.0, -499.0);
+        assert!(p.touches(far));
+        p.confirm(6);
+        assert!(p.touches(far), "the dropped change is still unconfirmed");
+        p.confirm(7);
+        assert!(!p.touches(far) && p.is_empty());
+    }
+
+    #[test]
+    fn pending_blocks_lookup_small_and_large_areas() {
+        let mut p = PendingBlocks::default();
+        p.add([10, 64, 10], 1);
+        p.add([10, 64, 10], 5); // the later confirmation wins
+        assert!(p.touches(Aabb::new(9.5, 64.0, 9.5, 10.5, 65.8, 10.5)));
+        // A huge area (teleport-sized move) takes the map-scan path.
+        assert!(p.touches(Aabb::new(-1000.0, -64.0, -1000.0, 1000.0, 320.0, 1000.0)));
+        assert!(!p.touches(Aabb::new(30.0, 64.0, 30.0, 31.0, 65.0, 31.0)));
+        p.confirm(4);
+        assert_eq!(p.len(), 1);
+        p.confirm(5);
         assert!(p.is_empty());
     }
 

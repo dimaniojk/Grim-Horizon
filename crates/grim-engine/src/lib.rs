@@ -18,6 +18,7 @@ pub mod fluid;
 pub mod math;
 pub mod player;
 pub mod prediction;
+pub mod routing;
 pub mod velocity;
 pub mod world;
 

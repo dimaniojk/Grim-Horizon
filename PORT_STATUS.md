@@ -58,9 +58,9 @@ PARTIALLY IMPLEMENTED · BLOCKED · NOT IMPLEMENTED.
 | Subsystem | Status |
 |---|---|
 | Packet ingestion in client order (Horizon hooks) | IMPLEMENTED BUT UNVERIFIED (compiles into the real server; not run live) |
-| Outgoing packet observation | IMPLEMENTED BUT UNVERIFIED |
+| Outgoing packet observation | IMPLEMENTED BUT UNVERIFIED (sender routing unit-tested; never drops teleports or pings) |
 | Transactions (ping/pong), latency, timeouts | IMPLEMENTED AND TESTED (engine) |
-| Teleports and setbacks | IMPLEMENTED AND TESTED (engine); setbacks are off in the default alert-only mode |
+| Teleports and setbacks | IMPLEMENTED AND TESTED (engine: superseded, stale, respawn and unsent setbacks; step-up refused on the first move after); setbacks are off in the default alert-only mode; not run live |
 | Movement prediction: ground, air, jump, sprint, sneak, crouch slowdown, item-use slowdown, attributes (speed, gravity, jump strength, step height, scale, sneaking speed, friction/drag modifiers, bounciness), effects (jump boost, levitation, slow falling, dolphin's grace) | IMPLEMENTED AND TESTED |
 | Water, swimming, swim hop, lava | Water IMPLEMENTED AND TESTED; lava IMPLEMENTED BUT UNVERIFIED |
 | Climbing (ladders, vines, scaffolding) | IMPLEMENTED BUT UNVERIFIED (no ladder trace yet; open trapdoors above ladders not detected) |

@@ -201,3 +201,22 @@ fn random_legit_play_never_flags() {
         );
     }
 }
+
+/// `SEEDS=300 cargo test --release --test random_play sweep -- --ignored --nocapture`:
+/// how many seeds flag, for comparing engine changes.
+#[test]
+#[ignore]
+fn sweep() {
+    let seeds: u64 = std::env::var("SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(300);
+    let flagged: Vec<(u64, usize)> = (1..=seeds)
+        .map(|s| (s, play(s, 6000).flags.len()))
+        .filter(|(_, n)| *n > 0)
+        .collect();
+    println!(
+        "{} of {seeds} seeds clean; flagged: {flagged:?}",
+        seeds - flagged.len() as u64
+    );
+}

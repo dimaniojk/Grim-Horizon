@@ -28,3 +28,21 @@ runs, both shown:
 One player's engine state is 1,984 bytes plus small heap allocations
 (attribute modifiers, bounded queues). Allocation on the hot path has not
 been optimised yet: collision queries allocate a `Vec` per query.
+
+## Block updates (TNT scale)
+
+`cargo run --release --example bench_blocks`: every player is sent N block
+changes a tick near the players, then moves, answers pings, and the engine
+predicts each move against those pending changes. Apple M1, 200 ticks, engine
+time per server tick for all players; alerts 0 in every run.
+
+| Players | Changes per tick each | Before (VecDeque) | After (map) |
+|---|---|---|---|
+| 50 | 500 | 11.555 ms | 2.914 ms |
+| 50 | 2,000 | 167.877 ms | 9.691 ms |
+| 100 | 500 | 22.848 ms | 5.604 ms |
+| 100 | 2,000 | 335.553 ms | 19.409 ms |
+
+2,000 changes per player per tick is above a large TNT blast; 100 players at
+that rate still take 19 ms of a 50 ms tick, so heavy block churn remains the
+engine's most expensive load.

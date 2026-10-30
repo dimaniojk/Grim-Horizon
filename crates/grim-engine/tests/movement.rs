@@ -512,3 +512,24 @@ fn block_changes_near_the_player_wait_for_transactions() {
     h.tick(Keys::default());
     assert_clean(&h);
 }
+
+#[test]
+fn unreported_block_changes_are_unknown_until_confirmed() {
+    let mut h = Harness::new(flat_world(stone()), SPAWN);
+    for _ in 0..5 {
+        h.tick(Keys::default());
+    }
+    // The integration lost which blocks changed (its outbox overflowed):
+    // the floor may be gone or not, so nothing is judged until the client
+    // answers the next transaction.
+    h.engine
+        .on_outgoing(KEY, grim_horizon_engine::Clientbound::BlocksUnknown);
+    h.world.remove(0, 63, 0);
+    let (_, skipped) = h.checked_predictions();
+    h.client_tick(Keys::default(), |c| c.position_reminder = 19);
+    assert_clean(&h);
+    assert!(
+        h.checked_predictions().1 > skipped,
+        "judged against unknown blocks"
+    );
+}

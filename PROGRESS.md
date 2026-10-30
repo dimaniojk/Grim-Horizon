@@ -44,7 +44,7 @@ Timer, GroundSpoof, NoFall, Simulation.
 
 ## Phase 6: validation and packaging (partly done)
 
-* 68 automated tests, including published vanilla numbers, cheat traces,
+* 83 automated tests, including published vanilla numbers, cheat traces,
   latency, bursts, teleports, unloaded chunks and block-change compensation.
 * Random legit play: 300 seeds × 6,000 ticks; 298 clean.
 * Benchmarks (benchmarks/README.md).
@@ -71,6 +71,43 @@ behaviour, where the engine was already right): supporting-block friction,
 float bounding boxes, the sneak slowdown's one-tick delay, crouching when
 there is no room to stand, crawling after swimming, sinking with shift in
 water, swimming, the sprint impulse rule.
+
+## Review fixes (2026-10-30)
+
+From a code review of the last commit, each with a regression test:
+
+1. **Pending block changes were O(n)** (a `VecDeque` scanned on every
+   movement and drained from the front). Now a map keyed by block position;
+   past 4,096 entries every block counts as unknown until the client confirms,
+   never as confirmed. 100 players with 2,000 changes a tick each: 335.6 ms
+   → 19.8 ms per server tick (benchmarks/README.md).
+2. **Packets could reach the wrong player.** The send hook knew a sender only
+   by its address, and a freed address can be reused by the next connection.
+   `routing::SenderRoutes` now holds a strong reference to every sender it
+   maps or buffers for, so an address cannot be reused while it is known;
+   buffers of closed connections are swept every tick.
+3. **A superseded setback stopped checks for good.** Ported Grim's rule
+   (SetbackTeleportUtil.checkTeleportQueue): every server teleport replaces
+   the required setback, and accepting the newest one ends it. A respawn ends
+   it too, and a setback whose teleport is never sent gives up after 40 ticks.
+   An accepted older teleport while a newer one is pending does not end it.
+4. **The step-up restriction never ran.** `setback_ticks_complete` was set to
+   1 when the setback was asked for and reset to 0 on acceptance. It now
+   follows Grim's SetBackData: 0 while unaccepted, 1 for the first movement
+   after the newest teleport is accepted (stepping refused), then counting.
+
+Found while auditing the Horizon adapter for ways to stop judging a player:
+
+5. The inbox index was reset only for guests still in the level at
+   `sync_world`; a guest who changed level kept a stale count, and the engine
+   could miss its next packets, including the spawn teleport's acceptance
+   (the player then stayed unjudged). Now reset by connection for every guest
+   read that tick.
+6. The outbox dropped any packet past 65,536 a tick, a lost teleport or ping
+   included. Only block updates are dropped now, and a lost one makes every
+   block unknown until the next transaction (`Clientbound::BlocksUnknown`).
+
+Random play over 300 seeds: 298 clean, the same two seeds as before.
 
 ## Next
 

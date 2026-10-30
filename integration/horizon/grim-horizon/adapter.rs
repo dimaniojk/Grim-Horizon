@@ -7,13 +7,15 @@
 // the adapter may call Horizon (teleports, chat, kicks) while it holds ENGINE.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::AtomicUsize;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 use grim_horizon_engine::engine::{Action, Clientbound as GC, Engine, Serverbound as GS, Verdict};
 use grim_horizon_engine::entities::EntitySnapshot;
 use grim_horizon_engine::math::{Aabb as GAabb, Vec3 as GVec3};
 use grim_horizon_engine::player::{Attr, Effect, Modifier, ModifierOp};
+use grim_horizon_engine::routing::SenderRoutes;
 use grim_horizon_engine::world::{BlockFacts, BlockKind, BlockView, FluidFacts, FluidKind};
 use grim_horizon_engine::{Config, PING_MARK};
 use horizon_core::geometry::{Aabb, Vec3};
@@ -43,10 +45,12 @@ pub enum Outgoing {
     Login { entity: i32, game_mode: i32 },
     Health(f32),
     Blocks(Vec<[i32; 3]>),
+    /// Block changes dropped because the outbox was full.
+    BlocksLost,
     Passengers { vehicle: i32, passengers: Vec<i32> },
 }
 
-static OUTBOX: Mutex<Vec<(usize, Outgoing)>> = Mutex::new(Vec::new());
+static OUTBOX: Mutex<Vec<(Arc<AtomicUsize>, Outgoing)>> = Mutex::new(Vec::new());
 static ENGINE: Mutex<Option<Adapter>> = Mutex::new(None);
 static LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static SIZES: OnceLock<()> = OnceLock::new();
@@ -71,10 +75,9 @@ pub fn take_log() -> Vec<String> {
 pub struct Adapter {
     engine: Engine,
     start: Instant,
-    /// PlayerSender identity (its `pending` Arc) -> connection.
-    senders: HashMap<usize, u32>,
-    /// Packets sent before the sender was bound to a player (the join burst).
-    unbound: HashMap<usize, Vec<Outgoing>>,
+    /// PlayerSender (its `pending` Arc, held so the address stays unique)
+    /// -> connection, and the join burst sent before the player was known.
+    routes: SenderRoutes<AtomicUsize, Outgoing>,
     /// Inbox entries already given to the engine, by connection.
     seen: HashMap<u32, usize>,
     entity_ids: HashMap<u32, i32>,
@@ -83,6 +86,8 @@ pub struct Adapter {
     effects: Vec<Option<Effect>>,
     names_loaded: bool,
     facts: FactsCache,
+    /// Guests whose inbox the engine read since the last `inbox_done`.
+    processed: Vec<u32>,
 }
 
 /// Block facts by block state, decoded from names the first time.
@@ -143,8 +148,7 @@ impl Adapter {
         Self {
             engine: Engine::new(config),
             start: Instant::now(),
-            senders: HashMap::new(),
-            unbound: HashMap::new(),
+            routes: SenderRoutes::default(),
             seen: HashMap::new(),
             entity_ids: HashMap::new(),
             riding: HashMap::new(),
@@ -152,6 +156,7 @@ impl Adapter {
             effects: Vec::new(),
             names_loaded: false,
             facts: FactsCache::default(),
+            processed: Vec::new(),
         }
     }
 
@@ -174,18 +179,9 @@ impl Adapter {
     fn drain_outbox(&mut self) {
         let out = std::mem::take(&mut *OUTBOX.lock().unwrap_or_else(|e| e.into_inner()));
         for (sender, o) in out {
-            match self.senders.get(&sender).copied() {
-                Some(conn) => self.deliver(conn, o),
-                None => {
-                    let list = self.unbound.entry(sender).or_default();
-                    if list.len() < 512 {
-                        list.push(o);
-                    }
-                }
+            if let Some((conn, o)) = self.routes.route(&sender, o) {
+                self.deliver(conn, o);
             }
-        }
-        if self.unbound.len() > 256 {
-            self.unbound.clear();
         }
     }
 
@@ -241,6 +237,7 @@ impl Adapter {
                 }
                 return;
             }
+            Outgoing::BlocksLost => GC::BlocksUnknown,
             Outgoing::Passengers { vehicle, passengers } => {
                 let riding = self.riding.entry(conn).or_insert(None);
                 if passengers.contains(&me) {
@@ -501,19 +498,17 @@ pub fn process_inbox(hub: &mut Hub, i: usize, ctx: &mut TickCtx<'_>, events: &mu
     let adapter = guard.get_or_insert_with(Adapter::new);
     adapter.load_names(hub);
     let conn = hub.guests[i].conn;
-    let sender = std::sync::Arc::as_ptr(&hub.guests[i].sender.pending) as usize;
     if adapter.engine.player(conn).is_none() {
+        // Everything sent so far, in order, before the join burst.
+        adapter.drain_outbox();
         let g = &hub.guests[i];
         adapter.engine.add_player(conn, g.uuid, &g.name, g.permission);
         adapter.entity_ids.insert(conn, g.entity_id);
         adapter.engine.on_outgoing(conn, GC::EntityId(g.entity_id));
         adapter.engine.on_outgoing(conn, GC::GameMode(g.game_mode));
-        adapter.senders.insert(sender, conn);
         adapter.seen.insert(conn, 0);
-        if let Some(early) = adapter.unbound.remove(&sender) {
-            for o in early {
-                adapter.deliver(conn, o);
-            }
+        for o in adapter.routes.bind(&hub.guests[i].sender.pending, conn) {
+            adapter.deliver(conn, o);
         }
     }
     adapter.drain_outbox();
@@ -571,6 +566,7 @@ pub fn process_inbox(hub: &mut Hub, i: usize, ctx: &mut TickCtx<'_>, events: &mu
         inbox.remove(k);
     }
     adapter.seen.insert(conn, inbox.len());
+    adapter.processed.push(conn);
 
     for (_, args) in commands {
         let outcome = adapter.engine.command(Some(conn), &args, now);
@@ -597,17 +593,20 @@ fn reload(adapter: &mut Adapter) -> String {
     }
 }
 
-/// `Hub::sync_world` HEAD: what is left in the inboxes of the level's guests
-/// was seen this tick.
+/// `Hub::sync_world` HEAD: what is left in the inboxes of the guests read
+/// this tick was seen (packets only arrive in `poll`). By connection, not by
+/// level: a guest who changed level since is no longer `here`, and a stale
+/// count would hide its next packets (its spawn teleport's acceptance) from
+/// the engine.
 pub fn inbox_done(hub: &Hub) {
     if disabled() {
         return;
     }
     let mut guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
     let Some(adapter) = guard.as_mut() else { return };
-    for g in hub.guests.iter().filter(|g| hub.here(g)) {
-        if adapter.seen.contains_key(&g.conn) {
-            adapter.seen.insert(g.conn, g.inbox.len());
+    for conn in std::mem::take(&mut adapter.processed) {
+        if let Some(g) = hub.guests.iter().find(|g| g.conn == conn) {
+            adapter.seen.insert(conn, g.inbox.len());
         }
     }
 }
@@ -655,8 +654,9 @@ pub fn end_tick(hub: &mut Hub) {
         adapter.seen.remove(&key);
         adapter.entity_ids.remove(&key);
         adapter.riding.remove(&key);
-        adapter.senders.retain(|_, c| *c != key);
+        adapter.routes.unbind(key);
     }
+    adapter.routes.sweep();
     let now = adapter.now();
     adapter.engine.end_tick(now);
     adapter.handle_actions(hub);
@@ -694,7 +694,7 @@ pub fn register_sizes(sizes: &[(String, f32, f32)]) {
 }
 
 /// `PlayerSender::send` HEAD: decodes the few packets the engine needs.
-pub fn observe_send(sender: usize, body: &[u8]) {
+pub fn observe_send(sender: &Arc<AtomicUsize>, body: &[u8]) {
     if disabled() {
         return;
     }
@@ -759,7 +759,12 @@ pub fn observe_send(sender: usize, body: &[u8]) {
         _ => return,
     };
     let mut out = OUTBOX.lock().unwrap_or_else(|e| e.into_inner());
-    if out.len() < 1 << 16 {
-        out.push((sender, o));
-    }
+    // Drained every tick; the cap only bounds a flood of block updates.
+    // Teleports, pings and the like are never dropped (a lost one leaves the
+    // player unjudged), and lost block changes leave every block unknown.
+    let o = match o {
+        Outgoing::Blocks(_) if out.len() >= 1 << 16 => Outgoing::BlocksLost,
+        o => o,
+    };
+    out.push((sender.clone(), o));
 }
