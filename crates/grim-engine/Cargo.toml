@@ -1,0 +1,13 @@
+[package]
+name = "grim-horizon-engine"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+description = "A native Rust port of Grim Anticheat's predictive engine and checks, independent of any server"
+publish = false
+
+# horizon-mixins only accepts plain registry requirements that already exist
+# in Horizon's Cargo.lock (serde 1.0.229, toml 1.1.6 at the pinned commit).
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "1"

@@ -1,0 +1,540 @@
+// Grim-Horizon test support: an independent model of the vanilla 26.3
+// client's movement (LocalPlayer -> LivingEntity.travel), written from the
+// game's behaviour rather than from the engine's code, plus a harness that
+// drives the engine with the packets such a client sends.
+#![allow(dead_code)]
+
+use grim_horizon_engine::engine::{Action, Clientbound, Engine, PlayerKey, Serverbound, Verdict};
+use grim_horizon_engine::math::{Aabb, Vec3, mc_cos, mc_sin};
+use grim_horizon_engine::world::{BlockFacts, BlockKind, FluidKind, TestWorld};
+use grim_horizon_engine::{CheckId, Config};
+
+pub const KEY: PlayerKey = 7;
+
+/// A vanilla client, simplified to what the scenarios use.
+#[derive(Clone, Debug)]
+pub struct Client {
+    pub pos: Vec3,
+    pub vel: Vec3,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub on_ground: bool,
+    pub sprinting: bool,
+    pub sneaking: bool,
+    pub no_jump_delay: i32,
+    pub movement_speed: f64,
+    pub jump_strength: f32,
+    pub position_reminder: i32,
+    pub last_sent_pos: Vec3,
+    pub last_sent_rot: (f32, f32),
+    pub last_sent_ground: bool,
+    pub last_sent_input: u8,
+    pub last_sent_sprint: bool,
+    pub in_water: bool,
+    pub jump_boost: Option<i32>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Keys {
+    pub forward: bool,
+    pub backward: bool,
+    pub left: bool,
+    pub right: bool,
+    pub jump: bool,
+    pub sneak: bool,
+    pub sprint: bool,
+}
+
+impl Keys {
+    pub fn flags(&self) -> u8 {
+        u8::from(self.forward)
+            | u8::from(self.backward) << 1
+            | u8::from(self.left) << 2
+            | u8::from(self.right) << 3
+            | u8::from(self.jump) << 4
+            | u8::from(self.sneak) << 5
+            | u8::from(self.sprint) << 6
+    }
+    pub fn forward() -> Self {
+        Keys { forward: true, ..Default::default() }
+    }
+}
+
+fn player_box(p: Vec3, height: f64) -> Aabb {
+    Aabb::new(p.x - 0.3, p.y, p.z - 0.3, p.x + 0.3, p.y + height, p.z + 0.3)
+}
+
+impl Client {
+    pub fn new(pos: Vec3) -> Self {
+        Self {
+            pos,
+            vel: Vec3::ZERO,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: false,
+            sprinting: false,
+            sneaking: false,
+            no_jump_delay: 0,
+            movement_speed: 0.10000000149011612,
+            jump_strength: 0.42,
+            position_reminder: 0,
+            last_sent_pos: pos,
+            last_sent_rot: (0.0, 0.0),
+            last_sent_ground: false,
+            last_sent_input: 0,
+            last_sent_sprint: false,
+            in_water: false,
+            jump_boost: None,
+        }
+    }
+
+    fn height(&self) -> f64 {
+        if self.sneaking { 1.5 } else { 1.8 }
+    }
+
+    /// `Entity.collide` with vanilla's step-up, against the world's boxes.
+    fn collide(&self, world: &TestWorld, m: Vec3) -> Vec3 {
+        use grim_horizon_engine::world::BlockView;
+        let bb = player_box(self.pos, self.height());
+        let mut boxes = Vec::new();
+        world.collision_boxes(bb.expand_towards(m.x, m.y, m.z).expand(0.0, 0.6, 0.0).inflate(1.0), &mut boxes);
+        let along = |mut v: Vec3, start: Aabb| {
+            let mut b = start;
+            for c in &boxes {
+                v.y = c.collide_y(&b, v.y);
+            }
+            b = b.offset(0.0, v.y, 0.0);
+            let x_first = v.x.abs() >= v.z.abs();
+            if x_first {
+                for c in &boxes {
+                    v.x = c.collide_x(&b, v.x);
+                }
+                b = b.offset(v.x, 0.0, 0.0);
+                for c in &boxes {
+                    v.z = c.collide_z(&b, v.z);
+                }
+            } else {
+                for c in &boxes {
+                    v.z = c.collide_z(&b, v.z);
+                }
+                b = b.offset(0.0, 0.0, v.z);
+                for c in &boxes {
+                    v.x = c.collide_x(&b, v.x);
+                }
+            }
+            v
+        };
+        let mut r = along(m, bb);
+        let landed = r.y != m.y && m.y < 0.0;
+        if (self.on_ground || landed) && (r.x != m.x || r.z != m.z) {
+            // Step up by at most 0.6: try the stair heights.
+            let start = if landed { bb.offset(0.0, r.y, 0.0) } else { bb };
+            let mut heights: Vec<f64> = boxes
+                .iter()
+                .flat_map(|c| [c.min_y, c.max_y])
+                .map(|y| f64::from((y - start.min_y) as f32))
+                .filter(|h| *h >= 0.0 && *h <= 0.6 && *h != f64::from(r.y as f32))
+                .collect();
+            heights.sort_by(|a, b| a.total_cmp(b));
+            heights.dedup();
+            for h in heights {
+                let s = along(Vec3::new(m.x, h, m.z), start);
+                if s.x * s.x + s.z * s.z > r.x * r.x + r.z * r.z {
+                    r = Vec3::new(s.x, s.y + (start.min_y - bb.min_y), s.z);
+                    break;
+                }
+            }
+        }
+        r
+    }
+
+    fn block_friction(&self, world: &TestWorld) -> f32 {
+        use grim_horizon_engine::world::BlockView;
+        let b = world.block(self.pos.x.floor() as i32, (self.pos.y - 0.500001).floor() as i32, self.pos.z.floor() as i32);
+        b.friction
+    }
+
+    /// One client tick: `LivingEntity.aiStep` and `travel` on land, or the
+    /// water branch when in still water.
+    pub fn tick(&mut self, world: &TestWorld, keys: Keys) {
+        use grim_horizon_engine::world::BlockView;
+        // LocalPlayer.aiStep computes `crouching` before `input.tick()`
+        // reads this tick's keys: the slowdown (and the crouching pose) lag
+        // the shift key by one tick, while the edge back-off reads it now.
+        let crouching = self.sneaking;
+        self.sneaking = keys.sneak;
+        if self.no_jump_delay > 0 {
+            self.no_jump_delay -= 1;
+        }
+        // 1.21.5+: tiny horizontal velocity is dropped as a whole.
+        if self.vel.x * self.vel.x + self.vel.z * self.vel.z < 9.0e-6 {
+            self.vel.x = 0.0;
+            self.vel.z = 0.0;
+        }
+        if self.vel.y.abs() < 0.003 {
+            self.vel.y = 0.0;
+        }
+        let water = world.fluid(self.pos.x.floor() as i32, self.pos.y.floor() as i32, self.pos.z.floor() as i32).kind == FluidKind::Water;
+        self.in_water = water;
+        if keys.jump && !water {
+            if self.on_ground && self.no_jump_delay == 0 {
+                let mut power = self.jump_strength;
+                if let Some(level) = self.jump_boost {
+                    power += 0.1 * (level + 1) as f32;
+                }
+                self.vel.y = f64::from(power).max(self.vel.y);
+                if self.sprinting {
+                    let r = self.yaw * (std::f64::consts::PI / 180.0) as f32;
+                    self.vel.x += -f64::from(mc_sin(f64::from(r))) * 0.2;
+                    self.vel.z += f64::from(mc_cos(f64::from(r))) * 0.2;
+                }
+                self.no_jump_delay = 10;
+            }
+        } else {
+            self.no_jump_delay = 0;
+        }
+        if keys.jump && water {
+            self.vel.y += f64::from(0.04_f32);
+        }
+        // Input: normalised, times 0.98, sneaking slowdown, square movement.
+        let fwd = f32::from(i8::from(keys.forward) - i8::from(keys.backward));
+        let strafe = f32::from(i8::from(keys.left) - i8::from(keys.right));
+        let len = (fwd * fwd + strafe * strafe).sqrt();
+        let (mut ix, mut iz) = if len < 1.0e-4 { (0.0, 0.0) } else { (strafe / len, fwd / len) };
+        if ix != 0.0 || iz != 0.0 {
+            ix *= 0.98;
+            iz *= 0.98;
+            if crouching {
+                ix *= 0.3;
+                iz *= 0.3;
+            }
+            let l = (ix * ix + iz * iz).sqrt();
+            let (mx, mz) = (ix / l, iz / l);
+            let (ax, az) = (mx.abs(), mz.abs());
+            let add = if az > ax { ax / az } else { az / ax };
+            let m = (l * (1.0 + add * add).sqrt()).min(1.0);
+            ix = mx * m;
+            iz = mz * m;
+        }
+        let speed_attr = if self.sprinting { f64::from((self.movement_speed + self.movement_speed * f64::from(0.3_f32)) as f32) } else { self.movement_speed };
+
+        if water {
+            let friction: f32 = if self.sprinting { 0.9 } else { 0.8 };
+            self.move_relative(0.02, ix, iz);
+            let m = self.vel;
+            let r = self.collide(world, m);
+            self.apply_move(m, r, world);
+            self.vel = self.vel.mul(f64::from(friction), f64::from(0.8_f32), f64::from(friction));
+            // Fluid-falling adjustment (not sprinting).
+            if !self.sprinting {
+                let g = 0.08;
+                let falling = r.y <= 0.0;
+                let y = self.vel.y;
+                self.vel.y = if falling && (y - 0.005).abs() >= 0.003 && (y - g / 16.0).abs() < 0.003 { -0.003 } else { y - g / 16.0 };
+            }
+            return;
+        }
+
+        let block_friction = self.block_friction(world);
+        let friction = if self.on_ground { f64::from(block_friction * 0.91) } else { 0.91 };
+        let speed = if self.on_ground {
+            if block_friction <= 0.6 { speed_attr as f32 } else { speed_attr as f32 * (0.21600002 / (block_friction * block_friction * block_friction)) }
+        } else if self.sprinting {
+            0.025999999
+        } else {
+            0.02
+        };
+        self.move_relative(speed, ix, iz);
+        let mut m = self.vel;
+        // Sneaking at an edge (Player.maybeBackOffFromEdge).
+        if self.sneaking && self.on_ground {
+            m = self.back_off(world, m);
+        }
+        let r = self.collide(world, m);
+        self.apply_move(m, r, world);
+        // Gravity and drag.
+        self.vel.y = (self.vel.y - 0.08) * f64::from(0.98_f32);
+        self.vel.x *= friction;
+        self.vel.z *= friction;
+    }
+
+    fn back_off(&self, world: &TestWorld, mut m: Vec3) -> Vec3 {
+        use grim_horizon_engine::world::BlockView;
+        let empty = |dx: f64, dz: f64| {
+            let b = player_box(self.pos, self.height()).offset(dx, -0.6, dz);
+            let mut boxes = Vec::new();
+            world.collision_boxes(b, &mut boxes);
+            !boxes.iter().any(|c| c.touches(&b))
+        };
+        let step = |a: &mut f64| {
+            if *a < 0.05 && *a >= -0.05 {
+                *a = 0.0
+            } else if *a > 0.0 {
+                *a -= 0.05
+            } else {
+                *a += 0.05
+            }
+        };
+        while m.x != 0.0 && empty(m.x, 0.0) {
+            step(&mut m.x);
+        }
+        while m.z != 0.0 && empty(0.0, m.z) {
+            step(&mut m.z);
+        }
+        while m.x != 0.0 && m.z != 0.0 && empty(m.x, m.z) {
+            step(&mut m.x);
+            step(&mut m.z);
+        }
+        m
+    }
+
+    fn move_relative(&mut self, speed: f32, ix: f32, iz: f32) {
+        let r = self.yaw * (std::f64::consts::PI / 180.0) as f32;
+        let (sin, cos) = (f64::from(mc_sin(f64::from(r))), f64::from(mc_cos(f64::from(r))));
+        let (ix, iz) = (f64::from(ix), f64::from(iz));
+        let s = f64::from(speed);
+        self.vel.x += (ix * cos - iz * sin) * s;
+        self.vel.z += (iz * cos + ix * sin) * s;
+    }
+
+    fn apply_move(&mut self, wanted: Vec3, done: Vec3, world: &TestWorld) {
+        use grim_horizon_engine::world::BlockView;
+        let mut done = done;
+        if done.length_squared() <= 1e-7 && wanted.length_squared() - done.length_squared() >= 1e-7 {
+            done = Vec3::ZERO;
+        }
+        self.pos = self.pos.add(done);
+        let x_hit = (wanted.x - done.x).abs() >= f64::from(1.0e-5_f32);
+        let z_hit = (wanted.z - done.z).abs() >= f64::from(1.0e-5_f32);
+        if x_hit {
+            self.vel.x = 0.0;
+        }
+        if z_hit {
+            self.vel.z = 0.0;
+        }
+        let vertical = wanted.y != done.y;
+        self.on_ground = vertical && wanted.y < 0.0;
+        if vertical {
+            // Slime bounces (not while sneaking).
+            let below = world.block(self.pos.x.floor() as i32, (self.pos.y - 0.2).floor() as i32, self.pos.z.floor() as i32);
+            if below.kind == BlockKind::SlimeBlock && !self.sneaking && self.vel.y < 0.0 {
+                // getVelocityAfterVerticalCollision with restitution 1.
+                let g = 0.08;
+                if -self.vel.y > g {
+                    let portion = done.y / self.vel.y;
+                    let drag = 1.0 + portion * (f64::from(0.98_f32) - 1.0);
+                    self.vel.y = (portion * g - self.vel.y) * drag;
+                } else {
+                    self.vel.y = 0.0;
+                }
+            } else {
+                self.vel.y = 0.0;
+            }
+        }
+        // Block speed factor (soul sand / honey under the player).
+        let under = world.block(self.pos.x.floor() as i32, (self.pos.y - 0.500001).floor() as i32, self.pos.z.floor() as i32);
+        let inside = world.block(self.pos.x.floor() as i32, self.pos.y.floor() as i32, self.pos.z.floor() as i32);
+        let f = if inside.speed_factor != 1.0 { inside.speed_factor } else { under.speed_factor };
+        self.vel.x *= f64::from(f);
+        self.vel.z *= f64::from(f);
+    }
+}
+
+/// Drives the engine with a client's packets and answers transactions.
+pub struct Harness {
+    pub engine: Engine,
+    pub world: TestWorld,
+    pub client: Client,
+    pub now: u64,
+    /// Ticks between a ping and its pong (latency).
+    pub latency_ticks: usize,
+    pings: std::collections::VecDeque<(usize, i32)>,
+    tick: usize,
+    pub flags: Vec<(CheckId, String)>,
+    pub actions: Vec<Action>,
+    pub verdicts: Vec<Verdict>,
+    pub teleport_id: i32,
+}
+
+impl Harness {
+    pub fn new(world: TestWorld, spawn: Vec3) -> Self {
+        let mut config = Config::default();
+        // Tests want every flag as an alert line.
+        config.alerts.format = "%check%|%verbose%".into();
+        let mut engine = Engine::new(config);
+        engine.add_player(KEY, 1, "Tester", 0);
+        // A staff member to receive alerts.
+        engine.add_player(99, 2, "Staff", 4);
+        let mut h = Self {
+            engine,
+            world,
+            client: Client::new(spawn),
+            now: 1_000_000_000_000,
+            latency_ticks: 1,
+            pings: Default::default(),
+            tick: 0,
+            flags: Vec::new(),
+            actions: Vec::new(),
+            verdicts: Vec::new(),
+            teleport_id: 0,
+        };
+        h.engine.on_outgoing(KEY, Clientbound::EntityId(42));
+        h.teleport(spawn);
+        h
+    }
+
+    pub fn with_config(mut self, f: impl FnOnce(&mut Config)) -> Self {
+        f(&mut self.engine.config);
+        self
+    }
+
+    /// A server teleport and the client's acceptance.
+    pub fn teleport(&mut self, pos: Vec3) {
+        self.teleport_id += 1;
+        let id = self.teleport_id;
+        self.engine.on_outgoing(KEY, Clientbound::Teleport { id, pos, delta: Vec3::ZERO, relatives: 0 });
+        self.client.pos = pos;
+        self.client.vel = Vec3::ZERO;
+        self.client.last_sent_pos = pos;
+        self.send(vec![Serverbound::AcceptTeleport { id, pos, rot: (self.client.yaw, self.client.pitch) }]);
+    }
+
+    pub fn send(&mut self, packets: Vec<Serverbound>) {
+        let v = self.engine.on_incoming(KEY, &packets, &self.world, self.now);
+        self.verdicts.extend(v);
+        self.collect();
+    }
+
+    fn collect(&mut self) {
+        for a in self.engine.drain_actions() {
+            if let Action::Message { key: 99, text } = &a {
+                let mut parts = text.splitn(2, '|');
+                let name = parts.next().unwrap_or_default();
+                if let Some(c) = CheckId::from_name(name) {
+                    self.flags.push((c, parts.next().unwrap_or_default().to_owned()));
+                }
+            }
+            if let Action::SendPing { key: KEY, id } = a {
+                self.engine.on_outgoing(KEY, Clientbound::Ping { id });
+                self.pings.push_back((self.tick + self.latency_ticks, id));
+            }
+            self.actions.push(a);
+        }
+    }
+
+    /// Server-side velocity (knockback) for the player.
+    pub fn velocity(&mut self, v: Vec3) {
+        self.engine.on_outgoing(KEY, Clientbound::Velocity(v));
+    }
+
+    /// One client tick with these keys, then one server tick.
+    pub fn tick(&mut self, keys: Keys) {
+        self.client_tick(keys, |_| {});
+    }
+
+    /// `n` client ticks whose packets reach the server within one server
+    /// tick (a client catching up after a stall, or network jitter).
+    pub fn burst(&mut self, n: usize, keys: Keys) {
+        let mut all = Vec::new();
+        for _ in 0..n {
+            all.extend(self.client_packets(keys, |_| {}));
+        }
+        self.send(all);
+        self.server_tick();
+    }
+
+    /// Like `tick`, but lets a test tamper with the client before it sends.
+    pub fn client_tick(&mut self, keys: Keys, tamper: impl FnOnce(&mut Client)) {
+        let packets = self.client_packets(keys, tamper);
+        self.send(packets);
+        self.server_tick();
+    }
+
+    fn client_packets(&mut self, keys: Keys, tamper: impl FnOnce(&mut Client)) -> Vec<Serverbound> {
+        let mut packets = Vec::new();
+        // Pongs that arrived since the last tick.
+        while let Some(&(due, id)) = self.pings.front() {
+            if due > self.tick {
+                break;
+            }
+            self.pings.pop_front();
+            packets.push(Serverbound::Pong { id });
+        }
+        let flags = keys.flags();
+        if flags != self.client.last_sent_input {
+            packets.push(Serverbound::Input { flags });
+            self.client.last_sent_input = flags;
+        }
+        // Sprinting starts with the sprint key while moving forward.
+        let want_sprint = keys.sprint && keys.forward && !keys.sneak;
+        if want_sprint != self.client.sprinting {
+            self.client.sprinting = want_sprint;
+        }
+        self.client.tick(&self.world, keys);
+        tamper(&mut self.client);
+        if self.client.sprinting != self.client.last_sent_sprint {
+            packets.push(Serverbound::PlayerCommand { action: if self.client.sprinting { 1 } else { 2 } });
+            self.client.last_sent_sprint = self.client.sprinting;
+        }
+        // LocalPlayer.sendPosition.
+        let c = &mut self.client;
+        c.position_reminder += 1;
+        let d = c.pos.sub(c.last_sent_pos);
+        let moved = d.length_squared() > 2.0e-4 * 2.0e-4 || c.position_reminder >= 20;
+        let turned = (c.yaw, c.pitch) != c.last_sent_rot;
+        let packet = if moved && turned {
+            Some(Serverbound::Move { pos: Some(c.pos), rot: Some((c.yaw, c.pitch)), on_ground: c.on_ground, horizontal_collision: false })
+        } else if moved {
+            Some(Serverbound::Move { pos: Some(c.pos), rot: None, on_ground: c.on_ground, horizontal_collision: false })
+        } else if turned {
+            Some(Serverbound::Move { pos: None, rot: Some((c.yaw, c.pitch)), on_ground: c.on_ground, horizontal_collision: false })
+        } else if c.on_ground != c.last_sent_ground {
+            Some(Serverbound::Move { pos: None, rot: None, on_ground: c.on_ground, horizontal_collision: false })
+        } else {
+            None
+        };
+        if moved {
+            c.last_sent_pos = c.pos;
+            c.position_reminder = 0;
+        }
+        if turned {
+            c.last_sent_rot = (c.yaw, c.pitch);
+        }
+        if packet.is_some() {
+            c.last_sent_ground = c.on_ground;
+        }
+        packets.extend(packet);
+        packets.push(Serverbound::TickEnd);
+        packets
+    }
+
+    pub fn server_tick(&mut self) {
+        self.now += 50_000_000;
+        self.engine.end_tick(self.now);
+        self.collect();
+        self.tick += 1;
+    }
+
+    pub fn flagged(&self, c: CheckId) -> usize {
+        self.flags.iter().filter(|(k, _)| *k == c).count()
+    }
+
+    pub fn last_offset(&self) -> f64 {
+        self.engine.last_offset(KEY).unwrap()
+    }
+
+    pub fn checked_predictions(&self) -> (u64, u64) {
+        let p = self.engine.player(KEY).unwrap();
+        (p.predictions, p.skipped)
+    }
+}
+
+pub fn flat_world(facts: BlockFacts) -> TestWorld {
+    let mut w = TestWorld::new();
+    w.floor(-64, 64, 63, -64, 64, facts);
+    w
+}
+
+pub fn stone() -> BlockFacts {
+    BlockFacts::SOLID
+}

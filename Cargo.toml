@@ -1,0 +1,6 @@
+# Development workspace for Grim-Horizon. The engine crate is self-contained:
+# the Horizon integration copies it into a horizon-mixins bundle as a
+# `[[crate]]`, where it builds against Horizon's own Cargo.lock.
+[workspace]
+members = ["crates/grim-engine"]
+resolver = "2"
