@@ -1,0 +1,100 @@
+# Grim-Horizon: the Horizon integration of the Grim anti-cheat port.
+# A horizon-mixins bundle: HEAD hooks on Horizon's server-side packet hub and
+# network sender, a support module (adapter.rs) that translates Horizon's types
+# for the engine, and the engine itself as a bundle crate (engine/, copied from
+# crates/grim-engine by tools/build_server.py).
+
+[mod]
+id = "grim-horizon"
+version = "0.1.0"
+
+[compatibility]
+horizon_revision = "c5410785c0a0bc9b17eefa85fb108793e57d1d38"
+
+[[crate]]
+id = "engine"
+path = "engine"
+dependent = "horizon-client"
+
+# The adapter lives in the play hub's file so it can use the hub's private
+# helpers; `pub` lets the game binary's hooks reach it.
+[[module]]
+id = "adapter"
+file = "crates/horizon-client/src/lan/hub.rs"
+name = "grim_horizon"
+source = "adapter.rs"
+visibility = "pub"
+
+# Each guest's packets, in client order, before Horizon handles them.
+[[injection]]
+id = "inbox"
+target = "horizon_client::lan::hub::Hub::process_inbox"
+kind = "HEAD"
+helper = "inbox.rs"
+bindings = [
+  { name = "hub", ty = "&mut Hub", value = "&mut *self" },
+  { name = "i", ty = "usize", value = "i" },
+  { name = "ctx", ty = "&mut TickCtx<'_>", value = "&mut *ctx" },
+  { name = "events", ty = "&mut Vec<HostEvent>", value = "&mut *events" },
+]
+
+# After every guest of a level was handled: what is left in each inbox has
+# been seen.
+[[injection]]
+id = "inbox-done"
+target = "horizon_client::lan::hub::Hub::sync_world"
+kind = "HEAD"
+helper = "inbox_done.rs"
+bindings = [{ name = "hub", ty = "&Hub", value = "&*self" }]
+
+# The entities of a level at the start of its tick (Reach, Hitboxes).
+[[injection]]
+id = "level"
+target = "horizon_client::lan::hub::Hub::tick_level"
+kind = "HEAD"
+helper = "level.rs"
+bindings = [
+  { name = "hub", ty = "&Hub", value = "&*self" },
+  { name = "ctx", ty = "&TickCtx<'_>", value = "&*ctx" },
+]
+
+# The end of a server tick: transactions, timeouts, queued actions.
+[[injection]]
+id = "end-tick"
+target = "horizon_client::lan::hub::Hub::end_tick"
+kind = "HEAD"
+helper = "end_tick.rs"
+bindings = [{ name = "hub", ty = "&mut Hub", value = "&mut *self" }]
+
+# Every packet the server sends a guest (velocity, teleports, attributes...).
+[[injection]]
+id = "send"
+target = "horizon_client::lan::conn::PlayerSender::send"
+kind = "HEAD"
+helper = "send.rs"
+bindings = [
+  { name = "sender", ty = "&PlayerSender", value = "self" },
+  { name = "body", ty = "&Vec<u8>", value = "&body" },
+]
+
+# `grim ...` typed in the dedicated server's console.
+[[injection]]
+id = "console"
+target = "horizon_client::game::dedicated::Game<'_>::console_command"
+kind = "HEAD"
+cancellable = true
+helper = "console.rs"
+bindings = [
+  { name = "game", ty = "&mut Game<'_>", value = "&mut *self" },
+  { name = "line", ty = "&str", value = "line" },
+]
+
+# Once a tick in the game: entity sizes from the prepared resources, and the
+# adapter's log lines in the server log.
+[[injection]]
+id = "tick"
+hook = "tick"
+hook_version = 1
+kind = "HEAD"
+helper = "tick.rs"
+bindings = [{ name = "game", ty = "&mut Game<'_>", value = "&mut *self" }]

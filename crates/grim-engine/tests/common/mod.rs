@@ -32,6 +32,8 @@ pub struct Client {
     pub last_sent_sprint: bool,
     pub in_water: bool,
     pub jump_boost: Option<i32>,
+    /// The last tick's movement, for the supporting-block fallback.
+    pub last_move: Vec3,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -85,6 +87,7 @@ impl Client {
             last_sent_sprint: false,
             in_water: false,
             jump_boost: None,
+            last_move: Vec3::ZERO,
         }
     }
 
@@ -148,10 +151,37 @@ impl Client {
         r
     }
 
+    /// `getBlockPosBelowThatAffectsMyMovement`: on the ground, the main
+    /// supporting block (the closest one under the box), else the block
+    /// below the feet.
     fn block_friction(&self, world: &TestWorld) -> f32 {
         use grim_horizon_engine::world::BlockView;
-        let b = world.block(self.pos.x.floor() as i32, (self.pos.y - 0.500001).floor() as i32, self.pos.z.floor() as i32);
-        b.friction
+        let below_y = (self.pos.y - 0.500001).floor() as i32;
+        if self.on_ground {
+            // Entity.checkSupportingBlock: under the box, else under the box
+            // moved back by the last movement (walking off an edge).
+            for back in [Vec3::ZERO, self.last_move] {
+                let bb = player_box(self.pos, self.height()).offset(-back.x, 0.0, -back.z);
+                let mut best: Option<(f64, f32)> = None;
+                for x in (bb.min_x.floor() as i32)..=(bb.max_x.floor() as i32) {
+                    for z in (bb.min_z.floor() as i32)..=(bb.max_z.floor() as i32) {
+                        let b = world.block(x, below_y, z);
+                        if b.air {
+                            continue;
+                        }
+                        let (cx, cz) = (f64::from(x) + 0.5 - self.pos.x, f64::from(z) + 0.5 - self.pos.z);
+                        let d = cx * cx + cz * cz;
+                        if best.is_none_or(|(bd, _)| d < bd) {
+                            best = Some((d, b.friction));
+                        }
+                    }
+                }
+                if let Some((_, f)) = best {
+                    return f;
+                }
+            }
+        }
+        world.block(self.pos.x.floor() as i32, below_y, self.pos.z.floor() as i32).friction
     }
 
     /// One client tick: `LivingEntity.aiStep` and `travel` on land, or the
@@ -174,10 +204,34 @@ impl Client {
         if self.vel.y.abs() < 0.003 {
             self.vel.y = 0.0;
         }
-        let water = world.fluid(self.pos.x.floor() as i32, self.pos.y.floor() as i32, self.pos.z.floor() as i32).kind == FluidKind::Water;
+        // Entity.updateInWaterStateAndDoFluidPushing: the water height over
+        // the box (deflated by 0.001); still water has no current.
+        let fluid_height = {
+            let bb = player_box(self.pos, self.height()).inflate(-0.001);
+            let mut h = 0.0_f64;
+            for x in (bb.min_x.floor() as i32)..(bb.max_x.ceil() as i32) {
+                for y in (bb.min_y.floor() as i32)..(bb.max_y.ceil() as i32) {
+                    for z in (bb.min_z.floor() as i32)..(bb.max_z.ceil() as i32) {
+                        let f = world.fluid(x, y, z);
+                        if f.kind == FluidKind::Water {
+                            let top = f64::from(y) + f64::from(f.height);
+                            if top >= bb.min_y {
+                                h = h.max(top - bb.min_y);
+                            }
+                        }
+                    }
+                }
+            }
+            h
+        };
+        let water = fluid_height > 0.0;
         self.in_water = water;
-        if keys.jump && !water {
-            if self.on_ground && self.no_jump_delay == 0 {
+        // LivingEntity.aiStep's jumping, with the fluid rules.
+        if keys.jump {
+            let threshold = 0.4; // getFluidJumpThreshold: eye height >= 0.4
+            if water && !(self.on_ground && fluid_height <= threshold) {
+                self.vel.y += f64::from(0.04_f32); // jumpInLiquid
+            } else if (self.on_ground || (water && fluid_height <= threshold)) && self.no_jump_delay == 0 {
                 let mut power = self.jump_strength;
                 if let Some(level) = self.jump_boost {
                     power += 0.1 * (level + 1) as f32;
@@ -192,9 +246,6 @@ impl Client {
             }
         } else {
             self.no_jump_delay = 0;
-        }
-        if keys.jump && water {
-            self.vel.y += f64::from(0.04_f32);
         }
         // Input: normalised, times 0.98, sneaking slowdown, square movement.
         let fwd = f32::from(i8::from(keys.forward) - i8::from(keys.backward));
@@ -219,6 +270,7 @@ impl Client {
         let speed_attr = if self.sprinting { f64::from((self.movement_speed + self.movement_speed * f64::from(0.3_f32)) as f32) } else { self.movement_speed };
 
         if water {
+            let falling = self.vel.y <= 0.0;
             let friction: f32 = if self.sprinting { 0.9 } else { 0.8 };
             self.move_relative(0.02, ix, iz);
             let m = self.vel;
@@ -228,7 +280,6 @@ impl Client {
             // Fluid-falling adjustment (not sprinting).
             if !self.sprinting {
                 let g = 0.08;
-                let falling = r.y <= 0.0;
                 let y = self.vel.y;
                 self.vel.y = if falling && (y - 0.005).abs() >= 0.003 && (y - g / 16.0).abs() < 0.003 { -0.003 } else { y - g / 16.0 };
             }
@@ -304,6 +355,7 @@ impl Client {
             done = Vec3::ZERO;
         }
         self.pos = self.pos.add(done);
+        self.last_move = done;
         let x_hit = (wanted.x - done.x).abs() >= f64::from(1.0e-5_f32);
         let z_hit = (wanted.z - done.z).abs() >= f64::from(1.0e-5_f32);
         if x_hit {
@@ -354,6 +406,8 @@ pub struct Harness {
     pub actions: Vec<Action>,
     pub verdicts: Vec<Verdict>,
     pub teleport_id: i32,
+    /// Time spent inside the engine (on_incoming, on_outgoing, end_tick).
+    pub engine_nanos: u64,
 }
 
 impl Harness {
@@ -377,6 +431,7 @@ impl Harness {
             actions: Vec::new(),
             verdicts: Vec::new(),
             teleport_id: 0,
+            engine_nanos: 0,
         };
         h.engine.on_outgoing(KEY, Clientbound::EntityId(42));
         h.teleport(spawn);
@@ -400,7 +455,9 @@ impl Harness {
     }
 
     pub fn send(&mut self, packets: Vec<Serverbound>) {
+        let start = std::time::Instant::now();
         let v = self.engine.on_incoming(KEY, &packets, &self.world, self.now);
+        self.engine_nanos += start.elapsed().as_nanos() as u64;
         self.verdicts.extend(v);
         self.collect();
     }
@@ -510,7 +567,9 @@ impl Harness {
 
     pub fn server_tick(&mut self) {
         self.now += 50_000_000;
+        let start = std::time::Instant::now();
         self.engine.end_tick(self.now);
+        self.engine_nanos += start.elapsed().as_nanos() as u64;
         self.collect();
         self.tick += 1;
     }
