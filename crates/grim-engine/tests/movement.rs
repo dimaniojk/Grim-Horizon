@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // Movement scenarios: an independent model of the vanilla 26.3 client moves,
 // and the engine must predict it without flagging. Cheating variants must flag.
 

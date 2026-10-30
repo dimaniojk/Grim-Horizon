@@ -190,11 +190,10 @@ Three kinds of evidence, kept apart:
 
 ### Live server: blocked
 
-On this Mac: Java 25 (Temurin) is installed; the only Minecraft install is
-Feather's 1.21.8 profile in `~/Library/Application Support/minecraft` (no
-`versions/26.3`, no 26.3 server jar), which Horizon cannot use. Needed from
-the owner: the official launcher's 26.3 install, the 26.3 server jar, and a
-decision on the EULA. Exact commands: BUILD.md, section 5. The next milestone
+On the development machine, Java 25 is installed but there is no official
+Minecraft 26.3 installation (no `versions/26.3`, no 26.3 server jar), so
+Horizon's game files cannot be prepared. Needed from the owner: the official
+launcher's 26.3 install, the 26.3 server jar, and a decision on the EULA. Exact commands: BUILD.md, section 5. The next milestone
 is the 27-check smoke test on a running server; no new checks before it.
 
 ### False positives fixed (each a regression seed)

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // Block-update load: TNT-scale block changes broadcast to 50-100 players
 // while they move. Run with `cargo run --release --example bench_blocks`.
 

@@ -2,3 +2,14 @@ target/
 /work/
 /dist/
 *.log
+
+# Never commit Minecraft's files, prepared game data, worlds or server state.
+*.jar
+.local/
+eula.txt
+server.properties
+world/
+worlds/
+logs/
+grim-horizon.toml
+!configs/grim-horizon.toml

@@ -85,7 +85,7 @@ exact steps (all on your own machine; nothing touches your worlds).
 1. **Minecraft 26.3, from the official launcher.** Install the official
    Minecraft Launcher (https://www.minecraft.net/download), sign in with the
    Microsoft account that owns Minecraft: Java Edition, select release 26.3
-   and press Play once. (A Feather or other third-party profile does not
+   and press Play once. (A third-party launcher profile does not
    count: Horizon needs the official 26.3 files.) Check:
 
    ```sh
@@ -100,7 +100,7 @@ exact steps (all on your own machine; nothing touches your worlds).
    curl -fL -o ~/Downloads/server-26.3.jar "$URL"
    ```
 
-3. **Java 25** (`java -version`; Temurin 25 is on this Mac).
+3. **Java 25** (`java -version`), as Horizon's `horizon-prepare` requires.
 4. **Prepare Horizon's game files** with the `horizon-prepare` of Horizon's
    pinned commit (Horizon's `docs/hosting.md`, step 2):
 

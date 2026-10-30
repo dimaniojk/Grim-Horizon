@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 fn tick(game: &mut Game<'_>) {
     if !horizon_client::lan::hub::grim_horizon::sizes_registered() {
         let sizes: Vec<(String, f32, f32)> = game

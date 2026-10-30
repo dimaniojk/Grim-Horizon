@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // Long random legit play over varied terrain: the engine must never flag
 // what the vanilla-model client does.
 

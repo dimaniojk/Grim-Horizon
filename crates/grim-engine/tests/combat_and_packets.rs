@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // Reach, Hitboxes and the packet checks, driven through the engine API.
 
 mod common;

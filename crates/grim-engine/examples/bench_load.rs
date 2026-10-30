@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // Load and stability: many vanilla-model players (the test suite's client)
 // against one engine, under the stresses a server sees. Engine time only
 // (on_incoming, on_outgoing, end_tick): a real server's tick adds Horizon's

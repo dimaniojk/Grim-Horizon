@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // Block changes around a player must not become a way to switch movement
 // checks off. Each scenario plays a legitimate client (no alert expected) and
 // a cheating one (an alert expected) through the same changing world, and

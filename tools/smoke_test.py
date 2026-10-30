@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
 """End-to-end test of Grim-Horizon on a real Horizon dedicated server.
 
 It starts the server built by tools/build_server.py in a fresh scratch folder

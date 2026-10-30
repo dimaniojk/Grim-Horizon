@@ -1,0 +1,50 @@
+name: Bug report
+description: A false positive, a missed cheat, a crash or a build problem
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Grim-Horizon is experimental. Please do not attach Minecraft files,
+        world saves or anything from `.local/`.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of problem?
+      options:
+        - False positive (a legitimate player was flagged)
+        - Missed cheat
+        - Server crash or "internal error" in the log
+        - Build or test failure
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: alerts
+    attributes:
+      label: Alerts and debug output
+      description: The `[Grim]` alert lines, and `/grim debug <player>` output around the problem if you have it.
+      render: text
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce
+      description: Where the player was (blocks around them, water, ice, slabs...), what they did, their ping.
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Grim-Horizon commit, Horizon commit, client (vanilla 26.3 or other)
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode in grim-horizon.toml
+      options: [alert-only, setback, punish]

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // Where the engine declines to judge (unknown blocks, unloaded chunks), it
 // must do so for the smallest region and time it can, and say so.
 

@@ -1,6 +1,6 @@
 // Grim-Horizon: a Rust port of Grim Anticheat (https://github.com/GrimAnticheat/Grim).
 // Copyright (C) GrimAC contributors (original Java), Grim-Horizon contributors (port).
-// Licensed under the GNU General Public License, version 3 or (at your option) any later version; see LICENSE.
+// SPDX-License-Identifier: GPL-3.0-only (GNU General Public License, version 3; see LICENSE)
 
 //! Ports of Grim's `Collisions`, `MainSupportingBlockPosFinder`,
 //! `BlockProperties` and `StuckSpeed` for 26.3 clients (1.21+ stepping,

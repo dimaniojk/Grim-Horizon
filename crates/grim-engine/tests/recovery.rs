@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // A panic inside the engine must cost only the player whose packets caused
 // it, and leave nothing half-updated behind.
 

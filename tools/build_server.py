@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
 """Build a Horizon dedicated server with Grim-Horizon, reproducibly.
 
 Steps (each logged, each re-runnable):

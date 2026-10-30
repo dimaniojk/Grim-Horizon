@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // Engine benchmark, independent of any server: drives N simulated players
 // through the engine and reports time per movement packet and per server
 // tick. Run with `cargo run --release --example bench`.

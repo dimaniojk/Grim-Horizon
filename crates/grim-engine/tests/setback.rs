@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // Setback lifecycle (SetbackTeleportUtil): a setback must end when the
 // client accepts the newest server teleport, however it was superseded, and
 // the first movement after it may not step up.

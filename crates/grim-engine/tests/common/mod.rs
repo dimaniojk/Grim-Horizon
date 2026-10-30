@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // Grim-Horizon test support: an independent model of the vanilla 26.3
 // client's movement (LocalPlayer -> LivingEntity.travel), written from the
 // game's behaviour rather than from the engine's code, plus a harness that

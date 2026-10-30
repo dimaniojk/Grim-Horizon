@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 fn console(game: &mut Game<'_>, line: &str) -> std::ops::ControlFlow<()> {
     let line = line.strip_prefix('/').unwrap_or(line);
     let Some(lines) = horizon_client::lan::hub::grim_horizon::console(line) else {

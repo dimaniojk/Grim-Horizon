@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only AND MIT (MIT parts: see THIRD_PARTY_NOTICES.md)
 //! grim-bot: a player for Grim-Horizon's end-to-end test (tools/smoke_test.py).
 //!
 //! It joins a Horizon server offline, then moves with the vanilla-model
