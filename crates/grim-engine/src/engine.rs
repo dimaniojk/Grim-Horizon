@@ -653,7 +653,8 @@ impl Engine {
             p.awaiting_setback = None;
             p.setback_ticks_complete = 0;
         }
-        p.movement.packet_on_ground = false;
+        // The client's ground flag is not changed by a teleport (Grim keeps
+        // packetPlayerOnGround as it was).
     }
 
     fn context<'a>(&self, world: &'a dyn BlockView, kb: &'a mut KnockbackHandler, ex: &'a mut ExplosionHandler, disallow_stepping: bool) -> Context<'a> {
@@ -739,16 +740,21 @@ impl Engine {
             return verdict;
         }
 
-        // Ground status changed without a position (handleFlying).
+        // Ground status changed without a position (handleFlying). Grim
+        // answers an infeasible change with a resync teleport; without one
+        // (alert-only mode) the engine must still follow the client, so a
+        // claim of leaving the ground, which gains nothing, is always taken.
         if pos.is_none() && on_ground != p.movement.packet_on_ground {
             let m = &mut p.movement;
-            let feasible = collisions::slow_could_point_three_hit_ground(m, world, m.x, m.y, m.z);
-            if !feasible || (m.client_velocity.y > 0.06 && !m.uncertainty.was_affected_by_stuck_speed()) {
-                self.request_setback(p);
-            } else {
+            let feasible = !on_ground
+                || (collisions::slow_could_point_three_hit_ground(m, world, m.x, m.y, m.z)
+                    && !(m.client_velocity.y > 0.06 && !m.uncertainty.was_affected_by_stuck_speed()));
+            if feasible {
                 m.last_on_ground = on_ground;
                 m.client_claims_last_on_ground = on_ground;
                 m.uncertainty.on_ground_uncertain = true;
+            } else {
+                self.request_setback(p);
             }
         }
         // NoFall for packets without a position.
@@ -838,8 +844,7 @@ impl Engine {
             m.did_last_last_movement_include_position = m.did_last_movement_include_position;
             m.did_last_movement_include_position = false;
             if !m.in_vehicle && p.spawned {
-                prediction::update_player_pose(m, world);
-                m.was_sneaking = m.is_sneaking;
+                prediction::idle_tick(m, world);
             }
         }
         p.movement.did_send_movement_before_tick_end = false;

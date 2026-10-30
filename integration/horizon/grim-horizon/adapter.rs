@@ -399,6 +399,24 @@ impl BlockView for View<'_, '_, '_> {
             height: if same_above { 1.0 } else { fluid.own_height() },
         }
     }
+    fn block_collision_boxes(&self, x: i32, y: i32, z: i32, out: &mut Vec<GAabb>) {
+        // Scan the cell and its upper neighbour space; keep this block's hits.
+        let (fx, fy, fz) = (f64::from(x), f64::from(y), f64::from(z));
+        let bounds = Aabb::new(Vec3::new(fx - 0.5, fy - 0.5, fz - 0.5), Vec3::new(fx + 1.5, fy + 2.0, fz + 1.5));
+        let mut scene = crate::collisions::SceneCollisions { world: self.world, binding: self.binding, subject: None };
+        let context = CollisionContext::position(fy);
+        let Ok(scan) = BlockCollisionScan::new(&mut scene, context, bounds, false, 1 << 12) else { return };
+        for hit in scan {
+            let Ok(hit) = hit else { break };
+            if hit.position.x != x || hit.position.y != y || hit.position.z != z {
+                continue;
+            }
+            for b in hit.shape.boxes() {
+                let (lo, hi) = (b.min_position(), b.max_position());
+                out.push(GAabb::new(lo.x, lo.y, lo.z, hi.x, hi.y, hi.z));
+            }
+        }
+    }
     fn collision_boxes(&self, query: GAabb, out: &mut Vec<GAabb>) {
         let bounds = Aabb::new(
             Vec3::new(query.min_x - 1.0e-6, query.min_y - 1.0e-6, query.min_z - 1.0e-6),
@@ -436,6 +454,7 @@ impl BlockView for Unknown {
         FluidFacts::default()
     }
     fn collision_boxes(&self, _: GAabb, _: &mut Vec<GAabb>) {}
+    fn block_collision_boxes(&self, _: i32, _: i32, _: i32, _: &mut Vec<GAabb>) {}
 }
 
 fn convert(packet: &S) -> GS {

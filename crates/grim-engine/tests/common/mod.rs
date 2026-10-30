@@ -34,6 +34,13 @@ pub struct Client {
     pub jump_boost: Option<i32>,
     /// The last tick's movement, for the supporting-block fallback.
     pub last_move: Vec3,
+    pub support: Option<[i32; 3]>,
+    pub pose_height: f64,
+    pub eye_height: f64,
+    pub crouching_pose: bool,
+    pub swimming: bool,
+    pub swimming_pose_last_was_swim: bool,
+    pub eye_in_water_last: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -62,8 +69,12 @@ impl Keys {
     }
 }
 
+/// `EntityDimensions.makeBoundingBox`: the half width is `0.6F / 2.0F`
+/// widened to a double, and heights are floats too.
 fn player_box(p: Vec3, height: f64) -> Aabb {
-    Aabb::new(p.x - 0.3, p.y, p.z - 0.3, p.x + 0.3, p.y + height, p.z + 0.3)
+    let half = f64::from(0.6_f32 / 2.0);
+    let height = f64::from(height as f32);
+    Aabb::new(p.x - half, p.y, p.z - half, p.x + half, p.y + height, p.z + half)
 }
 
 impl Client {
@@ -88,11 +99,18 @@ impl Client {
             in_water: false,
             jump_boost: None,
             last_move: Vec3::ZERO,
+            support: None,
+            pose_height: 1.8,
+            eye_height: 1.62,
+            crouching_pose: false,
+            swimming: false,
+            swimming_pose_last_was_swim: false,
+            eye_in_water_last: false,
         }
     }
 
     fn height(&self) -> f64 {
-        if self.sneaking { 1.5 } else { 1.8 }
+        self.pose_height
     }
 
     /// `Entity.collide` with vanilla's step-up, against the world's boxes.
@@ -151,48 +169,126 @@ impl Client {
         r
     }
 
-    /// `getBlockPosBelowThatAffectsMyMovement`: on the ground, the main
-    /// supporting block (the closest one under the box), else the block
-    /// below the feet.
-    fn block_friction(&self, world: &TestWorld) -> f32 {
+    /// `Entity.checkSupportingBlock`: the block under the feet whose shape
+    /// touches the box, closest to the player (vanilla's tie-break by lower
+    /// y, then lower x and z); else under the box moved back by the last
+    /// movement while still on the ground.
+    fn update_supporting_block(&mut self, world: &TestWorld) {
         use grim_horizon_engine::world::BlockView;
-        let below_y = (self.pos.y - 0.500001).floor() as i32;
-        if self.on_ground {
-            // Entity.checkSupportingBlock: under the box, else under the box
-            // moved back by the last movement (walking off an edge).
-            for back in [Vec3::ZERO, self.last_move] {
-                let bb = player_box(self.pos, self.height()).offset(-back.x, 0.0, -back.z);
-                let mut best: Option<(f64, f32)> = None;
-                for x in (bb.min_x.floor() as i32)..=(bb.max_x.floor() as i32) {
-                    for z in (bb.min_z.floor() as i32)..=(bb.max_z.floor() as i32) {
-                        let b = world.block(x, below_y, z);
-                        if b.air {
+        if !self.on_ground {
+            self.support = None;
+            return;
+        }
+        let find = |bb: Aabb| -> Option<[i32; 3]> {
+            let below = Aabb::new(bb.min_x, bb.min_y - 1.0e-6, bb.min_z, bb.max_x, bb.min_y, bb.max_z);
+            let mut best: Option<([i32; 3], f64)> = None;
+            for x in (below.min_x.floor() as i32)..=(below.max_x.floor() as i32) {
+                for y in (below.min_y.floor() as i32)..=(below.max_y.floor() as i32) {
+                    for z in (below.min_z.floor() as i32)..=(below.max_z.floor() as i32) {
+                        let mut boxes = Vec::new();
+                        world.block_collision_boxes(x, y, z, &mut boxes);
+                        if !boxes.iter().any(|c| c.intersects(&below)) {
                             continue;
                         }
-                        let (cx, cz) = (f64::from(x) + 0.5 - self.pos.x, f64::from(z) + 0.5 - self.pos.z);
-                        let d = cx * cx + cz * cz;
-                        if best.is_none_or(|(bd, _)| d < bd) {
-                            best = Some((d, b.friction));
+                        let c = Vec3::new(f64::from(x) + 0.5, f64::from(y) + 0.5, f64::from(z) + 0.5);
+                        let d = self.pos.distance_squared(c);
+                        let better = match best {
+                            None => true,
+                            Some((b, bd)) => d < bd || (d == bd && (y < b[1] || (y == b[1] && (x < b[0] || (x == b[0] && z < b[2]))))),
+                        };
+                        if better {
+                            best = Some(([x, y, z], d));
                         }
                     }
                 }
-                if let Some((_, f)) = best {
-                    return f;
+            }
+            best.map(|b| b.0)
+        };
+        let bb = player_box(self.pos, self.height());
+        self.support = find(bb).or_else(|| find(bb.offset(-self.last_move.x, 0.0, -self.last_move.z)));
+    }
+
+    /// `getBlockPosBelowThatAffectsMyMovement` (`getOnPos(0.500001)`).
+    fn block_friction(&self, world: &TestWorld) -> f32 {
+        use grim_horizon_engine::world::BlockView;
+        let below_y = (self.pos.y - 0.500001).floor() as i32;
+        match self.support {
+            Some(s) => world.block(s[0], below_y, s[2]).friction,
+            None => world.block(self.pos.x.floor() as i32, below_y, self.pos.z.floor() as i32).friction,
+        }
+    }
+
+    fn water_top_over_box(&self, world: &TestWorld) -> f64 {
+        use grim_horizon_engine::world::BlockView;
+        let bb = player_box(self.pos, self.height()).inflate(-0.001);
+        let mut h = 0.0_f64;
+        for x in (bb.min_x.floor() as i32)..(bb.max_x.ceil() as i32) {
+            for y in (bb.min_y.floor() as i32)..(bb.max_y.ceil() as i32) {
+                for z in (bb.min_z.floor() as i32)..(bb.max_z.ceil() as i32) {
+                    let f = world.fluid(x, y, z);
+                    if f.kind == FluidKind::Water {
+                        let top = f64::from(y) + f64::from(f.height);
+                        if top >= bb.min_y {
+                            h = h.max(top - bb.min_y);
+                        }
+                    }
                 }
             }
         }
-        world.block(self.pos.x.floor() as i32, below_y, self.pos.z.floor() as i32).friction
+        h
     }
 
-    /// One client tick: `LivingEntity.aiStep` and `travel` on land, or the
-    /// water branch when in still water.
+    fn eye_in_water(&self, world: &TestWorld) -> bool {
+        use grim_horizon_engine::world::BlockView;
+        let eye = self.pos.y + self.eye_height - 0.1111111119389534;
+        let (x, z) = (self.pos.x.floor() as i32, self.pos.z.floor() as i32);
+        let y = eye.floor() as i32;
+        let f = world.fluid(x, y, z);
+        f.kind == FluidKind::Water && eye <= f64::from(y) + f64::from(f.height)
+    }
+
+    /// One client tick in vanilla's order: `Entity.baseTick` (fluid state,
+    /// swimming), `LocalPlayer.aiStep` (crouching from last tick's key, the
+    /// keys, sprinting, sinking), `LivingEntity.aiStep` (jumping),
+    /// `Player.travel` / `LivingEntity.travel`, then `updatePlayerPose`.
     pub fn tick(&mut self, world: &TestWorld, keys: Keys) {
         use grim_horizon_engine::world::BlockView;
-        // LocalPlayer.aiStep computes `crouching` before `input.tick()`
-        // reads this tick's keys: the slowdown (and the crouching pose) lag
-        // the shift key by one tick, while the edge back-off reads it now.
-        let crouching = self.sneaking;
+        // --- Entity.baseTick
+        let was_eye_in_water = self.eye_in_water_last;
+        let fluid_height = self.water_top_over_box(world);
+        let water = fluid_height > 0.0;
+        self.in_water = water;
+        let feet_in_water = world.fluid(self.pos.x.floor() as i32, self.pos.y.floor() as i32, self.pos.z.floor() as i32).kind == FluidKind::Water;
+        // Player.updateSwimming, with last tick's sprinting.
+        self.swimming = if self.swimming { self.sprinting && water } else { self.sprinting && was_eye_in_water && water && feet_in_water };
+        // updateFluidOnEyes for the next tick.
+        self.eye_in_water_last = self.eye_in_water(world);
+        let under_water = was_eye_in_water && water;
+
+        // --- LocalPlayer.aiStep
+        // `crouching` is decided before `input.tick()` reads this tick's keys:
+        // not swimming, room to crouch, and last tick's shift key.
+        let fits = |h: f64| {
+            let b = player_box(self.pos, h).inflate(-1.0e-7);
+            let mut boxes = Vec::new();
+            world.collision_boxes(b, &mut boxes);
+            !boxes.iter().any(|c| c.touches(&b))
+        };
+        let crouching = !self.swimming && fits(1.5) && (self.sneaking || !fits(1.8));
         self.sneaking = keys.sneak;
+        // Sprinting: needs forward impulse, stops when it is lost, while
+        // sneaking, or in water when not under it.
+        let impulse = keys.forward && !keys.backward;
+        if self.sprinting && (!impulse || keys.sneak || (water && !under_water)) {
+            self.sprinting = false;
+        } else if !self.sprinting && keys.sprint && impulse && !keys.sneak && (!water || under_water) {
+            self.sprinting = true;
+        }
+        if water && keys.sneak {
+            self.vel.y += f64::from(-0.04_f32); // goDownInWater
+        }
+
+        // --- LivingEntity.aiStep
         if self.no_jump_delay > 0 {
             self.no_jump_delay -= 1;
         }
@@ -204,29 +300,6 @@ impl Client {
         if self.vel.y.abs() < 0.003 {
             self.vel.y = 0.0;
         }
-        // Entity.updateInWaterStateAndDoFluidPushing: the water height over
-        // the box (deflated by 0.001); still water has no current.
-        let fluid_height = {
-            let bb = player_box(self.pos, self.height()).inflate(-0.001);
-            let mut h = 0.0_f64;
-            for x in (bb.min_x.floor() as i32)..(bb.max_x.ceil() as i32) {
-                for y in (bb.min_y.floor() as i32)..(bb.max_y.ceil() as i32) {
-                    for z in (bb.min_z.floor() as i32)..(bb.max_z.ceil() as i32) {
-                        let f = world.fluid(x, y, z);
-                        if f.kind == FluidKind::Water {
-                            let top = f64::from(y) + f64::from(f.height);
-                            if top >= bb.min_y {
-                                h = h.max(top - bb.min_y);
-                            }
-                        }
-                    }
-                }
-            }
-            h
-        };
-        let water = fluid_height > 0.0;
-        self.in_water = water;
-        // LivingEntity.aiStep's jumping, with the fluid rules.
         if keys.jump {
             let threshold = 0.4; // getFluidJumpThreshold: eye height >= 0.4
             if water && !(self.on_ground && fluid_height <= threshold) {
@@ -247,7 +320,7 @@ impl Client {
         } else {
             self.no_jump_delay = 0;
         }
-        // Input: normalised, times 0.98, sneaking slowdown, square movement.
+        // Input: normalised, times 0.98, crouch slowdown, square movement.
         let fwd = f32::from(i8::from(keys.forward) - i8::from(keys.backward));
         let strafe = f32::from(i8::from(keys.left) - i8::from(keys.right));
         let len = (fwd * fwd + strafe * strafe).sqrt();
@@ -255,7 +328,8 @@ impl Client {
         if ix != 0.0 || iz != 0.0 {
             ix *= 0.98;
             iz *= 0.98;
-            if crouching {
+            // isMovingSlowly: crouching, or crawling (swimming pose out of water).
+            if crouching || (self.pose_height < 1.0 && !water) {
                 ix *= 0.3;
                 iz *= 0.3;
             }
@@ -270,6 +344,15 @@ impl Client {
         let speed_attr = if self.sprinting { f64::from((self.movement_speed + self.movement_speed * f64::from(0.3_f32)) as f32) } else { self.movement_speed };
 
         if water {
+            // Player.travel: a swimmer follows its look up and down.
+            if self.swimming {
+                let look_y = grim_horizon_engine::math::look_vector(self.yaw, self.pitch).y;
+                let k = if look_y < -0.2 { 0.085 } else { 0.06 };
+                let above = world.fluid(self.pos.x.floor() as i32, (self.pos.y + 1.0 - 0.1).floor() as i32, self.pos.z.floor() as i32).kind;
+                if look_y <= 0.0 || keys.jump || above != FluidKind::None {
+                    self.vel.y += (look_y - self.vel.y) * k;
+                }
+            }
             let falling = self.vel.y <= 0.0;
             let friction: f32 = if self.sprinting { 0.9 } else { 0.8 };
             self.move_relative(0.02, ix, iz);
@@ -283,30 +366,59 @@ impl Client {
                 let y = self.vel.y;
                 self.vel.y = if falling && (y - 0.005).abs() >= 0.003 && (y - g / 16.0).abs() < 0.003 { -0.003 } else { y - g / 16.0 };
             }
+        } else {
+            let block_friction = self.block_friction(world);
+            let friction = if self.on_ground { f64::from(block_friction * 0.91) } else { 0.91 };
+            let speed = if self.on_ground {
+                if block_friction <= 0.6 { speed_attr as f32 } else { speed_attr as f32 * (0.21600002 / (block_friction * block_friction * block_friction)) }
+            } else if self.sprinting {
+                0.025999999
+            } else {
+                0.02
+            };
+            self.move_relative(speed, ix, iz);
+            let mut m = self.vel;
+            // Sneaking at an edge (Player.maybeBackOffFromEdge).
+            if self.sneaking && self.on_ground {
+                m = self.back_off(world, m);
+            }
+            let r = self.collide(world, m);
+            self.apply_move(m, r, world);
+            // Gravity and drag.
+            self.vel.y = (self.vel.y - 0.08) * f64::from(0.98_f32);
+            self.vel.x *= friction;
+            self.vel.z *= friction;
+        }
+        self.update_pose(world);
+    }
+
+    /// `Player.updatePlayerPose`: swimming, crouching or standing, if the
+    /// box fits.
+    fn update_pose(&mut self, world: &TestWorld) {
+        use grim_horizon_engine::world::BlockView;
+        let fits = |h: f64| {
+            let b = player_box(self.pos, h).inflate(-1.0e-7);
+            let mut boxes = Vec::new();
+            world.collision_boxes(b, &mut boxes);
+            !boxes.iter().any(|c| c.touches(&b))
+        };
+        if !fits(0.6) {
             return;
         }
-
-        let block_friction = self.block_friction(world);
-        let friction = if self.on_ground { f64::from(block_friction * 0.91) } else { 0.91 };
-        let speed = if self.on_ground {
-            if block_friction <= 0.6 { speed_attr as f32 } else { speed_attr as f32 * (0.21600002 / (block_friction * block_friction * block_friction)) }
-        } else if self.sprinting {
-            0.025999999
+        let (mut height, mut eye) = if self.swimming {
+            (0.6, 0.4)
+        } else if self.sneaking {
+            (1.5, 1.27)
         } else {
-            0.02
+            (1.8, 1.62)
         };
-        self.move_relative(speed, ix, iz);
-        let mut m = self.vel;
-        // Sneaking at an edge (Player.maybeBackOffFromEdge).
-        if self.sneaking && self.on_ground {
-            m = self.back_off(world, m);
+        if !fits(height) {
+            (height, eye) = if fits(1.5) { (1.5, 1.27) } else { (0.6, 0.4) };
         }
-        let r = self.collide(world, m);
-        self.apply_move(m, r, world);
-        // Gravity and drag.
-        self.vel.y = (self.vel.y - 0.08) * f64::from(0.98_f32);
-        self.vel.x *= friction;
-        self.vel.z *= friction;
+        self.swimming_pose_last_was_swim = self.swimming;
+        self.crouching_pose = (height - 1.5).abs() < 1e-9;
+        self.pose_height = height;
+        self.eye_height = eye;
     }
 
     fn back_off(&self, world: &TestWorld, mut m: Vec3) -> Vec3 {
@@ -366,6 +478,7 @@ impl Client {
         }
         let vertical = wanted.y != done.y;
         self.on_ground = vertical && wanted.y < 0.0;
+        self.update_supporting_block(world);
         if vertical {
             // Slime bounces (not while sneaking).
             let below = world.block(self.pos.x.floor() as i32, (self.pos.y - 0.2).floor() as i32, self.pos.z.floor() as i32);
@@ -521,11 +634,6 @@ impl Harness {
         if flags != self.client.last_sent_input {
             packets.push(Serverbound::Input { flags });
             self.client.last_sent_input = flags;
-        }
-        // Sprinting starts with the sprint key while moving forward.
-        let want_sprint = keys.sprint && keys.forward && !keys.sneak;
-        if want_sprint != self.client.sprinting {
-            self.client.sprinting = want_sprint;
         }
         self.client.tick(&self.world, keys);
         tamper(&mut self.client);

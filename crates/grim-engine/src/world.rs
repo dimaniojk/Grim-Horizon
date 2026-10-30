@@ -119,6 +119,9 @@ pub trait BlockView {
     /// may reach into `query`, as `Collisions.getCollisionBoxes` gathers
     /// them, plus the world border's walls when the query is near it.
     fn collision_boxes(&self, query: Aabb, out: &mut Vec<Aabb>);
+    /// The collision boxes (world coordinates) of the block at one position
+    /// only, including parts that reach outside its cell (fences, walls).
+    fn block_collision_boxes(&self, x: i32, y: i32, z: i32, out: &mut Vec<Aabb>);
     /// True when `blocks motion` / the block has a full top face; used by
     /// `FluidTypeFlowing` to decide whether a neighbouring solid stops flow.
     fn is_solid_face(&self, x: i32, y: i32, z: i32) -> bool {
@@ -267,6 +270,11 @@ impl TestWorld {
 }
 
 impl BlockView for TestWorld {
+    fn block_collision_boxes(&self, x: i32, y: i32, z: i32, out: &mut Vec<Aabb>) {
+        if let Some((_, boxes)) = self.blocks.get(&[x, y, z]) {
+            out.extend(boxes.iter().copied());
+        }
+    }
     fn min_y(&self) -> i32 {
         self.min_y
     }

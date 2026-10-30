@@ -71,20 +71,33 @@ pub fn check(p: &mut Movement, cx: &mut Context<'_>, update: PositionUpdate) -> 
     p.on_ground = update.on_ground;
 
     // Sneaking near an edge: remember which sides held the player back.
+    // Grim probes one step of the last movement plus 0.05 each way; a short
+    // 0.05 probe is added so that a hole narrower than that step (where the
+    // long probe lands on the far side) still counts.
     if !p.is_flying && p.is_sneaking && collisions::is_above_ground(p, cx.world) {
         let m = p.actual_movement;
-        let pos_x = (m.x.clamp(-16.0, 16.0) + 0.05).max(0.05);
-        let pos_z = (m.z.clamp(-16.0, 16.0) + 0.05).max(0.05);
-        let neg_x = (m.x.clamp(-16.0, 16.0) - 0.05).min(-0.05);
-        let neg_z = (m.z.clamp(-16.0, 16.0) - 0.05).min(-0.05);
-        let ne = collisions::maybe_back_off_from_edge(Vec3::new(pos_x, 0.0, neg_z), p, cx.world);
-        let nw = collisions::maybe_back_off_from_edge(Vec3::new(neg_x, 0.0, neg_z), p, cx.world);
-        let se = collisions::maybe_back_off_from_edge(Vec3::new(pos_x, 0.0, pos_z), p, cx.world);
-        let sw = collisions::maybe_back_off_from_edge(Vec3::new(neg_x, 0.0, pos_z), p, cx.world);
-        let east = ne.x != pos_x || se.x != pos_x;
-        let west = nw.x != neg_x || sw.x != neg_x;
-        let north = ne.z != neg_z || nw.z != neg_z;
-        let south = se.z != pos_z || sw.z != pos_z;
+        let long = (
+            (m.x.clamp(-16.0, 16.0) + 0.05).max(0.05),
+            (m.z.clamp(-16.0, 16.0) + 0.05).max(0.05),
+            (m.x.clamp(-16.0, 16.0) - 0.05).min(-0.05),
+            (m.z.clamp(-16.0, 16.0) - 0.05).min(-0.05),
+        );
+        // A third probe reaches as far as this tick's movement can: the
+        // carried velocity plus a full input step (0.15 covers sprinting).
+        let v = p.client_velocity;
+        let reach = (v.x.abs().min(16.0) + 0.15, v.z.abs().min(16.0) + 0.15);
+        let fast = (reach.0, reach.1, -reach.0, -reach.1);
+        let (mut east, mut west, mut north, mut south) = (false, false, false, false);
+        for (pos_x, pos_z, neg_x, neg_z) in [long, (0.05, 0.05, -0.05, -0.05), fast] {
+            let ne = collisions::maybe_back_off_from_edge(Vec3::new(pos_x, 0.0, neg_z), p, cx.world);
+            let nw = collisions::maybe_back_off_from_edge(Vec3::new(neg_x, 0.0, neg_z), p, cx.world);
+            let se = collisions::maybe_back_off_from_edge(Vec3::new(pos_x, 0.0, pos_z), p, cx.world);
+            let sw = collisions::maybe_back_off_from_edge(Vec3::new(neg_x, 0.0, pos_z), p, cx.world);
+            east |= ne.x != pos_x || se.x != pos_x;
+            west |= nw.x != neg_x || sw.x != neg_x;
+            north |= ne.z != neg_z || nw.z != neg_z;
+            south |= se.z != pos_z || sw.z != pos_z;
+        }
         let u = &mut p.uncertainty;
         if east {
             u.last_stuck_east.reset();
@@ -105,6 +118,14 @@ pub fn check(p: &mut Movement, cx: &mut Context<'_>, update: PositionUpdate) -> 
 
     if p.in_bed {
         return PredictionComplete { offset: 0.0, checked: false, teleport: false, skipped: Some("sleeping") };
+    }
+
+    // The client keeps its ground flag through a teleport, so a sneaking
+    // player can be held at an "edge" in mid-air for a tick that sends no
+    // position while its velocity grows. Give the first prediction after a
+    // teleport Grim's minimal sneaking lenience (SneakingEstimator's 0.15).
+    if p.uncertainty.last_teleport_ticks.has_occurred_since(0) && p.is_sneaking && !p.did_last_movement_include_position {
+        p.sneaking_hidden = Aabb::new(-0.15, 0.0, -0.15, 0.15, 0.0, 0.15);
     }
 
     p.speed = p.attr(Attr::MovementSpeed);
@@ -323,14 +344,9 @@ fn block_collision_height(world: &dyn BlockView, x: i32, y: i32, z: i32) -> f64 
     if world.block(x, y, z).air {
         return 0.0;
     }
-    let cell = Aabb::new(f64::from(x), f64::from(y), f64::from(z), f64::from(x + 1), f64::from(y + 1), f64::from(z + 1));
     let mut boxes = Vec::new();
-    world.collision_boxes(cell.inflate(-1.0e-3), &mut boxes);
-    boxes
-        .iter()
-        .filter(|b| b.touches(&cell))
-        .map(|b| b.max_y - f64::from(y))
-        .fold(0.0, f64::max)
+    world.block_collision_boxes(x, y, z, &mut boxes);
+    boxes.iter().map(|b| b.max_y - f64::from(y)).fold(0.0, f64::max)
 }
 
 /// `MovementCheckRunner.handleTeleport`.
@@ -418,6 +434,29 @@ fn do_base_tick(p: &mut Movement, world: &dyn BlockView) {
     for (sx, sz) in [(-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0), (1.0, 1.0)] {
         move_towards_closest_space(p, world, p.last_x + sx * w * 0.35, p.last_z + sz * d * 0.35);
     }
+}
+
+/// A client tick that sent no movement packet (it moved less than 2e-4):
+/// the state the next tick reads still advances. Grim updates only the pose
+/// and `wasSneaking` here; the swimming state and the sprint history also
+/// change on such ticks (a swimmer can start in place), so they follow too.
+pub fn idle_tick(p: &mut Movement, world: &dyn BlockView) {
+    if p.in_vehicle || p.is_dead {
+        return;
+    }
+    p.was_eye_in_water = p.eye_in_water;
+    let s = fluid::scan(p, world, true);
+    p.was_was_touching_water = p.was_touching_water;
+    p.was_touching_water = s.water_height > 0.0;
+    p.was_touching_lava = s.lava_height > 0.0;
+    p.water_height = s.water_height;
+    p.lava_height = s.lava_height;
+    p.eye_in_water = s.eye_in_water;
+    p.eye_in_lava = s.eye_in_lava;
+    update_swimming(p, world);
+    update_player_pose(p, world);
+    p.last_sprinting = p.is_sprinting;
+    p.was_sneaking = p.is_sneaking;
 }
 
 /// `PlayerBaseTick.updateFluidInteraction`.
@@ -842,6 +881,24 @@ fn apply_movement_threshold(p: &Movement, v: &mut Vec<VectorData>) {
     let stuck_on_edge = p.uncertainty.stuck_on_edge.has_occurred_since(2);
     let mut extra = Vec::new();
     for d in v.iter_mut() {
+        // Near the 9e-6 cut the carried velocity's last bits decide; keep
+        // the side the client may be on as well.
+        let h = collisions::horizontal_distance_sqr(d.vector);
+        if (9.0e-6 * 0.8..9.0e-6 * 1.25).contains(&h) {
+            let mut other = *d;
+            if h < 9.0e-6 {
+                if other.vector.y.abs() < minimum {
+                    other.vector.y = 0.0;
+                }
+            } else {
+                other.vector.x = 0.0;
+                other.vector.z = 0.0;
+                if other.vector.y.abs() < minimum {
+                    other.vector.y = 0.0;
+                }
+            }
+            extra.push(other);
+        }
         if collisions::horizontal_distance_sqr(d.vector) < 9.0e-6 {
             if stuck_on_edge {
                 let mut edge = *d;
@@ -1211,8 +1268,19 @@ fn do_predictions(p: &mut Movement, cx: &mut Context<'_>, possible: &mut [Vector
         }
         p.bounding_box = if d.is_zero_point_zero_three() { point_three_box } else { original_bb };
 
-        let (test_primary, output, real_primary) = seek_wall_collisions(p, cx, primary, original_client_vel, d);
-        let accuracy = output.distance_squared(p.actual_movement);
+        let (mut test_primary, mut output, mut real_primary) = seek_wall_collisions(p, cx, primary, original_client_vel, d);
+        let mut accuracy = output.distance_squared(p.actual_movement);
+        // Grim moves 0.03 candidates with a 0.6 x 0.6 box because the pose is
+        // unknown after ticks without a position; the real pose is just as
+        // possible (it stops at a ledge the small box slips under).
+        if d.is_zero_point_zero_three() && original_bb != point_three_box {
+            p.bounding_box = original_bb;
+            let (t, o, r) = seek_wall_collisions(p, cx, primary, original_client_vel, d);
+            let a = o.distance_squared(p.actual_movement);
+            if a < accuracy {
+                (test_primary, output, real_primary, accuracy) = (t, o, r, a);
+            }
+        }
 
         if d.is_zero_point_zero_three() && accuracy < 0.001 * 0.001 {
             p.skipped_tick_in_actual_movement = true;
@@ -1238,7 +1306,6 @@ fn do_predictions(p: &mut Movement, cx: &mut Context<'_>, possible: &mut [Vector
         {
             continue;
         }
-        let mut accuracy = accuracy;
         if accuracy < best_input {
             let mut picked = d.modified(output, vt::BEST_VEL_PICKED);
             picked.types |= d.types & !vt::STICKY;

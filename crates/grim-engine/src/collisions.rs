@@ -262,8 +262,7 @@ pub fn suffocates_at(world: &dyn BlockView, bb: Aabb) -> bool {
             for x in floor(bb.min_x)..(bb.max_x.ceil() as i32) {
                 if world.block(x, y, z).suffocates {
                     boxes.clear();
-                    let cell = Aabb::new(f64::from(x), f64::from(y), f64::from(z), f64::from(x + 1), f64::from(y + 1), f64::from(z + 1));
-                    world.collision_boxes(cell.inflate(-1.0e-3), &mut boxes);
+                    world.block_collision_boxes(x, y, z, &mut boxes);
                     let intersects = boxes.iter().any(|b| {
                         b.max_x - COLLISION_EPSILON > bb.min_x
                             && b.min_x + COLLISION_EPSILON < bb.max_x
@@ -302,12 +301,12 @@ pub fn for_each_block(world: &dyn BlockView, bb: Aabb, mut f: impl FnMut(i32, i3
 /// intersects `bb`, by block position.
 pub fn for_each_colliding_block(world: &dyn BlockView, bb: Aabb, mut f: impl FnMut(i32, i32, i32, BlockFacts)) {
     let mut boxes = Vec::new();
-    for_each_block(world, bb, |x, y, z, b| {
+    // Fences and walls reach half a block above their cell.
+    let search = Aabb::new(bb.min_x, bb.min_y - 0.5, bb.min_z, bb.max_x, bb.max_y, bb.max_z);
+    for_each_block(world, search, |x, y, z, b| {
         boxes.clear();
-        let cell = Aabb::new(f64::from(x), f64::from(y), f64::from(z), f64::from(x + 1), f64::from(y + 1), f64::from(z + 1));
-        world.collision_boxes(cell.inflate(-1.0e-3), &mut boxes);
-        // Shapes that extend past their cell (fences) are found from their own cell.
-        if boxes.iter().any(|c| c.touches(&bb) && cell.inflate(0.5).touches(c)) {
+        world.block_collision_boxes(x, y, z, &mut boxes);
+        if boxes.iter().any(|c| c.intersects(&bb)) {
             f(x, y, z, b);
         }
     });
