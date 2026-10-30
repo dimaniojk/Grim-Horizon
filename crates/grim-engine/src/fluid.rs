@@ -1,6 +1,6 @@
 // Grim-Horizon: a Rust port of Grim Anticheat (https://github.com/GrimAnticheat/Grim).
 // Copyright (C) GrimAC contributors (original Java), Grim-Horizon contributors (port).
-// Licensed under the GNU General Public License v3.0 only; see LICENSE.
+// Licensed under the GNU General Public License, version 3 or (at your option) any later version; see LICENSE.
 
 //! Ports of `EntityFluidInteraction` (the 26.3 path) and `FluidTypeFlowing`.
 
@@ -76,7 +76,8 @@ pub fn flow(world: &dyn BlockView, x: i32, y: i32, z: i32) -> Vec3 {
     let mut v = Vec3::new(mod_x, 0.0, mod_z);
     if here.falling {
         for (dx, dz) in [(0, -1), (1, 0), (0, 1), (-1, 0)] {
-            if world.is_solid_face(x + dx, y, z + dz) || world.is_solid_face(x + dx, y + 1, z + dz) {
+            if world.is_solid_face(x + dx, y, z + dz) || world.is_solid_face(x + dx, y + 1, z + dz)
+            {
                 v = v.normalize().add(Vec3::new(0.0, -6.0, 0.0));
                 break;
             }
@@ -95,7 +96,11 @@ pub fn scan(p: &Movement, world: &dyn BlockView, ignore_current: bool) -> FluidS
     let mut out = FluidScan::default();
     let aabb = p.bounding_box.inflate(-0.001);
     let (min_x, min_y, min_z) = (floor(aabb.min_x), floor(aabb.min_y), floor(aabb.min_z));
-    let (max_x, max_y, max_z) = (ceil(aabb.max_x) - 1, ceil(aabb.max_y) - 1, ceil(aabb.max_z) - 1);
+    let (max_x, max_y, max_z) = (
+        ceil(aabb.max_x) - 1,
+        ceil(aabb.max_y) - 1,
+        ceil(aabb.max_z) - 1,
+    );
     if !has_fluid_and_loaded(world, min_x - 1, min_z - 1, max_x + 1, max_z + 1) {
         return out;
     }
@@ -117,7 +122,11 @@ pub fn scan(p: &Movement, world: &dyn BlockView, ignore_current: bool) -> FluidS
                 }
                 let water = f.kind == FluidKind::Water;
                 if x == player_x && z == player_z && player_eye_y >= f64::from(y) {
-                    let camera_top = if f.source && world.is_solid_face(x, y + 1, z) { f64::from(y) + 1.0 } else { top };
+                    let camera_top = if f.source && world.is_solid_face(x, y + 1, z) {
+                        f64::from(y) + 1.0
+                    } else {
+                        top
+                    };
                     if player_eye_y <= camera_top {
                         if water {
                             out.eye_in_water = true;
@@ -126,15 +135,27 @@ pub fn scan(p: &Movement, world: &dyn BlockView, ignore_current: bool) -> FluidS
                         }
                     }
                 }
-                let height = if water { &mut out.water_height } else { &mut out.lava_height };
+                let height = if water {
+                    &mut out.water_height
+                } else {
+                    &mut out.lava_height
+                };
                 *height = height.max(top - aabb_min_y);
                 let h = *height;
                 if !ignore_current {
                     let mut current = flow(world, x, y, z);
                     let (acc_height, acc, count) = if water {
-                        (&mut out.water_acc_height, &mut out.water_current, &mut out.water_count)
+                        (
+                            &mut out.water_acc_height,
+                            &mut out.water_current,
+                            &mut out.water_count,
+                        )
                     } else {
-                        (&mut out.lava_acc_height, &mut out.lava_current, &mut out.lava_count)
+                        (
+                            &mut out.lava_acc_height,
+                            &mut out.lava_current,
+                            &mut out.lava_count,
+                        )
                     };
                     *acc_height = acc_height.max(h);
                     if *acc_height < 0.4 {
@@ -153,13 +174,20 @@ impl FluidScan {
     /// `CurrentAccumulator.applyCurrentTo`: returns (the push before the
     /// 0.003 rule, the push actually added).
     pub fn current(&self, water: bool, scale: f64, client_velocity: Vec3) -> Option<(Vec3, Vec3)> {
-        let (acc, count) = if water { (self.water_current, self.water_count) } else { (self.lava_current, self.lava_count) };
+        let (acc, count) = if water {
+            (self.water_current, self.water_count)
+        } else {
+            (self.lava_current, self.lava_count)
+        };
         if count == 0 || acc.length_squared() < f64::from(1.0e-5_f32) {
             return None;
         }
         let current = acc.scale(1.0 / f64::from(count)).scale(scale);
         let mut added = current;
-        if client_velocity.x.abs() < 0.003 && client_velocity.z.abs() < 0.003 && current.length() < 0.0045000000000000005 {
+        if client_velocity.x.abs() < 0.003
+            && client_velocity.z.abs() < 0.003
+            && current.length() < 0.0045000000000000005
+        {
             added = current.normalize().scale(0.0045000000000000005);
         }
         Some((current, added))
@@ -202,8 +230,30 @@ mod tests {
     #[test]
     fn flowing_water_pushes_downhill() {
         let mut w = TestWorld::new();
-        w.set_fluid(0, 64, 0, FluidFacts { kind: FluidKind::Water, amount: 7, source: false, falling: false, height: 7.0 / 9.0 });
-        w.set_fluid(1, 64, 0, FluidFacts { kind: FluidKind::Water, amount: 6, source: false, falling: false, height: 6.0 / 9.0 });
+        w.set_fluid(
+            0,
+            64,
+            0,
+            FluidFacts {
+                kind: FluidKind::Water,
+                amount: 7,
+                source: false,
+                falling: false,
+                height: 7.0 / 9.0,
+            },
+        );
+        w.set_fluid(
+            1,
+            64,
+            0,
+            FluidFacts {
+                kind: FluidKind::Water,
+                amount: 6,
+                source: false,
+                falling: false,
+                height: 6.0 / 9.0,
+            },
+        );
         let v = flow(&w, 0, 64, 0);
         assert!(v.x > 0.0, "{v:?}");
     }

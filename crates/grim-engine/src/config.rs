@@ -1,6 +1,6 @@
 // Grim-Horizon: a Rust port of Grim Anticheat (https://github.com/GrimAnticheat/Grim).
 // Copyright (C) GrimAC contributors (original Java), Grim-Horizon contributors (port).
-// Licensed under the GNU General Public License v3.0 only; see LICENSE.
+// Licensed under the GNU General Public License, version 3 or (at your option) any later version; see LICENSE.
 
 //! Configuration, read from `grim-horizon.toml`. Defaults follow Grim's
 //! `config.yml`, except that the anti-cheat starts in alert-only mode: no
@@ -117,7 +117,13 @@ pub struct CheckConfig {
 
 impl Default for CheckConfig {
     fn default() -> Self {
-        Self { enabled: true, decay: None, setback_vl: None, alert_interval: 1, kick_vl: 0.0 }
+        Self {
+            enabled: true,
+            decay: None,
+            setback_vl: None,
+            alert_interval: 1,
+            kick_vl: 0.0,
+        }
     }
 }
 
@@ -165,7 +171,13 @@ impl Default for SimulationConfig {
 
 impl Default for KnockbackConfig {
     fn default() -> Self {
-        Self { threshold: 0.001, max_advantage: 1.0, immediate_setback_threshold: 0.1, setback_decay_multiplier: 0.999, max_ceiling: 4.0 }
+        Self {
+            threshold: 0.001,
+            max_advantage: 1.0,
+            immediate_setback_threshold: 0.1,
+            setback_decay_multiplier: 0.999,
+            max_ceiling: 4.0,
+        }
     }
 }
 
@@ -183,7 +195,10 @@ impl Default for TimerConfig {
 
 impl Default for ReachConfig {
     fn default() -> Self {
-        Self { threshold: 0.0005, interpolation_ticks: 4 }
+        Self {
+            threshold: 0.0005,
+            interpolation_ticks: 4,
+        }
     }
 }
 
@@ -226,7 +241,9 @@ impl Config {
         self.mode == Mode::Punish
     }
     pub fn is_exempt(&self, name: &str) -> bool {
-        self.exempt_players.iter().any(|n| n.eq_ignore_ascii_case(name))
+        self.exempt_players
+            .iter()
+            .any(|n| n.eq_ignore_ascii_case(name))
     }
 }
 
@@ -303,7 +320,9 @@ mod tests {
 
     #[test]
     fn per_check_overrides() {
-        let c = Config::parse("mode = \"punish\"\n[checks.Reach]\nenabled = false\nkick_vl = 10.0\n").unwrap();
+        let c =
+            Config::parse("mode = \"punish\"\n[checks.Reach]\nenabled = false\nkick_vl = 10.0\n")
+                .unwrap();
         assert!(!c.check("Reach").enabled);
         assert_eq!(c.check("Reach").kick_vl, 10.0);
         assert!(c.check("Simulation").enabled);

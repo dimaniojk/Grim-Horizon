@@ -1,5 +1,5 @@
 // Grim-Horizon adapter: Horizon's play hub and network sender on one side,
-// the engine (grim_horizon_engine) on the other. Licensed GPL-3.0-only (it
+// the engine (grim_horizon_engine) on the other. Licensed GPL-3.0-or-later (it
 // links the Grim port); see LICENSE in the Grim-Horizon repository.
 //
 // Threading: everything runs on Horizon's server thread. The engine sits in

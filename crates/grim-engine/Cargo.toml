@@ -2,7 +2,7 @@
 name = "grim-horizon-engine"
 version = "0.1.0"
 edition = "2024"
-license = "GPL-3.0-only"
+license = "GPL-3.0-or-later"
 description = "A native Rust port of Grim Anticheat's predictive engine and checks, independent of any server"
 publish = false
 

@@ -1,6 +1,6 @@
 // Grim-Horizon: a Rust port of Grim Anticheat (https://github.com/GrimAnticheat/Grim).
 // Copyright (C) GrimAC contributors (original Java), Grim-Horizon contributors (port).
-// Licensed under the GNU General Public License v3.0 only; see LICENSE.
+// Licensed under the GNU General Public License, version 3 or (at your option) any later version; see LICENSE.
 
 //! A native Rust port of Grim Anticheat's predictive movement engine and
 //! checks, for Minecraft 26.3 clients. The engine is independent of any

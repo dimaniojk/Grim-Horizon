@@ -10,7 +10,10 @@ use grim_horizon_engine::world::{BlockFacts, BlockKind, TestWorld};
 struct Lcg(u64);
 impl Lcg {
     fn next(&mut self) -> u32 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (self.0 >> 33) as u32
     }
     fn chance(&mut self, percent: u32) -> bool {
@@ -21,13 +24,27 @@ impl Lcg {
 fn varied_world(seed: u64) -> TestWorld {
     let mut rng = Lcg(seed);
     let mut w = TestWorld::new();
-    let ice = BlockFacts { friction: 0.98, kind: BlockKind::Ice, ..stone() };
+    let ice = BlockFacts {
+        friction: 0.98,
+        kind: BlockKind::Ice,
+        ..stone()
+    };
     for x in -40..=40 {
         for z in -40..=40 {
-            let facts = if (x / 6 + z / 6) % 5 == 0 { ice } else { stone() };
+            let facts = if (x / 6 + z / 6) % 5 == 0 {
+                ice
+            } else {
+                stone()
+            };
             w.set_full(x, 63, z, facts);
             match rng.next() % 40 {
-                0 => w.set_shape(x, 64, z, stone(), &[Aabb::new(0.0, 0.0, 0.0, 1.0, 0.5, 1.0)]),
+                0 => w.set_shape(
+                    x,
+                    64,
+                    z,
+                    stone(),
+                    &[Aabb::new(0.0, 0.0, 0.0, 1.0, 0.5, 1.0)],
+                ),
                 1 => w.set_full(x, 64, z, stone()),
                 2 => {
                     w.set_full(x, 64, z, stone());
@@ -78,7 +95,10 @@ fn play_debug(seed: u64, ticks: usize, debug: bool) -> Harness {
         // Stay inside the built area.
         if h.client.pos.x.abs() > 35.0 || h.client.pos.z.abs() > 35.0 || h.client.pos.y < 40.0 {
             if debug {
-                trail.push_back(format!("TELEPORT from {:?} ground {} sprint {}", h.client.pos, h.client.on_ground, h.client.sprinting));
+                trail.push_back(format!(
+                    "TELEPORT from {:?} ground {} sprint {}",
+                    h.client.pos, h.client.on_ground, h.client.sprinting
+                ));
             }
             h.teleport(Vec3::new(0.5, 66.0, 0.5));
             continue;
@@ -98,17 +118,53 @@ fn play_debug(seed: u64, ticks: usize, debug: bool) -> Harness {
             }
             let m = &h.engine.player(common::KEY).unwrap().movement;
             println!("FLAG {:?} keys {:?}", &h.flags[before.1..], keys);
-            println!("  before pos {:?} vel {:?} ground {} sprint {} sneak {} water {} support {:?} last_move {:?}", before.0.pos, before.0.vel, before.0.on_ground, before.0.sprinting, before.0.sneaking, before.0.in_water, before.0.support, before.0.last_move);
-            println!("  after  pos {:?} vel {:?} ground {}", h.client.pos, h.client.vel, h.client.on_ground);
-            println!("  engine pred {:?} act {:?} on_ground {} last_on_ground {} sprint {} slow {} water {} stepped {} yaw {} supporting {:?} friction {}", m.predicted.vector, m.actual_movement, m.on_ground, m.last_on_ground, m.is_sprinting, m.is_slow_movement, m.was_touching_water, m.uncertainty.is_step_movement, m.yaw, m.supporting, m.friction);
+            println!(
+                "  before pos {:?} vel {:?} ground {} sprint {} sneak {} water {} support {:?} last_move {:?}",
+                before.0.pos,
+                before.0.vel,
+                before.0.on_ground,
+                before.0.sprinting,
+                before.0.sneaking,
+                before.0.in_water,
+                before.0.support,
+                before.0.last_move
+            );
+            println!(
+                "  after  pos {:?} vel {:?} ground {}",
+                h.client.pos, h.client.vel, h.client.on_ground
+            );
+            println!(
+                "  engine pred {:?} act {:?} on_ground {} last_on_ground {} sprint {} slow {} water {} stepped {} yaw {} supporting {:?} friction {}",
+                m.predicted.vector,
+                m.actual_movement,
+                m.on_ground,
+                m.last_on_ground,
+                m.is_sprinting,
+                m.is_slow_movement,
+                m.was_touching_water,
+                m.uncertainty.is_step_movement,
+                m.yaw,
+                m.supporting,
+                m.friction
+            );
             let p = before.0.pos;
             for dy in -1..=1 {
                 let mut row = String::new();
                 for dz in -2..=2 {
                     for dx in -2..=2 {
                         use grim_horizon_engine::world::BlockView;
-                        let b = h.world.block(p.x.floor() as i32 + dx, p.y.floor() as i32 + dy, p.z.floor() as i32 + dz);
-                        row.push(if b.air { '.' } else if b.kind == BlockKind::Ice { 'i' } else { '#' });
+                        let b = h.world.block(
+                            p.x.floor() as i32 + dx,
+                            p.y.floor() as i32 + dy,
+                            p.z.floor() as i32 + dz,
+                        );
+                        row.push(if b.air {
+                            '.'
+                        } else if b.kind == BlockKind::Ice {
+                            'i'
+                        } else {
+                            '#'
+                        });
                     }
                     row.push(' ');
                 }
@@ -123,8 +179,14 @@ fn play_debug(seed: u64, ticks: usize, debug: bool) -> Harness {
 #[test]
 #[ignore]
 fn debug_first_flag() {
-    let seed = std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
-    let ticks = std::env::var("TICKS").ok().and_then(|s| s.parse().ok()).unwrap_or(6000);
+    let seed = std::env::var("SEED")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+    let ticks = std::env::var("TICKS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(6000);
     play_debug(seed, ticks, true);
 }
 
@@ -132,6 +194,10 @@ fn debug_first_flag() {
 fn random_legit_play_never_flags() {
     for seed in 1..=20 {
         let h = play(seed, 6000);
-        assert!(h.flags.is_empty(), "seed {seed}: {:?}", &h.flags[..h.flags.len().min(8)]);
+        assert!(
+            h.flags.is_empty(),
+            "seed {seed}: {:?}",
+            &h.flags[..h.flags.len().min(8)]
+        );
     }
 }

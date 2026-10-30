@@ -1,6 +1,6 @@
 // Grim-Horizon: a Rust port of Grim Anticheat (https://github.com/GrimAnticheat/Grim).
 // Copyright (C) GrimAC contributors (original Java), Grim-Horizon contributors (port).
-// Licensed under the GNU General Public License v3.0 only; see LICENSE.
+// Licensed under the GNU General Public License, version 3 or (at your option) any later version; see LICENSE.
 
 //! The anti-cheat engine: per-player state, packet handling in client order,
 //! transactions, setbacks, and the checks. It knows nothing about the server
@@ -26,27 +26,58 @@ pub type PlayerKey = u32;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Serverbound {
     /// `ServerboundMovePlayerPacket` (`Pos`, `PosRot`, `Rot`, `StatusOnly`).
-    Move { pos: Option<Vec3>, rot: Option<(f32, f32)>, on_ground: bool, horizontal_collision: bool },
+    Move {
+        pos: Option<Vec3>,
+        rot: Option<(f32, f32)>,
+        on_ground: bool,
+        horizontal_collision: bool,
+    },
     /// `ServerboundAcceptTeleportationPacket` (26.3 carries the position).
-    AcceptTeleport { id: i32, pos: Vec3, rot: (f32, f32) },
+    AcceptTeleport {
+        id: i32,
+        pos: Vec3,
+        rot: (f32, f32),
+    },
     /// `ServerboundClientTickEndPacket`.
     TickEnd,
     /// `ServerboundPlayerInputPacket` flags.
-    Input { flags: u8 },
+    Input {
+        flags: u8,
+    },
     /// `ServerboundPlayerCommandPacket` action ordinal (1 start sprint, 2 stop sprint).
-    PlayerCommand { action: i32 },
+    PlayerCommand {
+        action: i32,
+    },
     /// `ServerboundPlayerAbilitiesPacket`.
-    Abilities { flying: bool },
-    Attack { entity: i32 },
-    Interact { entity: i32 },
+    Abilities {
+        flying: bool,
+    },
+    Attack {
+        entity: i32,
+    },
+    Interact {
+        entity: i32,
+    },
     /// `ServerboundSwingPacket`.
-    Swing { main_hand: bool },
-    HeldSlot { slot: i32 },
+    Swing {
+        main_hand: bool,
+    },
+    HeldSlot {
+        slot: i32,
+    },
     /// `ServerboundPongPacket`.
-    Pong { id: i32 },
-    UseItemOn { pos: [i32; 3], face: i32 },
+    Pong {
+        id: i32,
+    },
+    UseItemOn {
+        pos: [i32; 3],
+        face: i32,
+    },
     /// `ServerboundPlayerActionPacket` (0 start, 1 abort, 2 finish digging...).
-    Dig { action: i32, pos: [i32; 3] },
+    Dig {
+        action: i32,
+        pos: [i32; 3],
+    },
     UseItem,
     /// Anything else, which only resets per-tick packet order state.
     Other,
@@ -63,13 +94,29 @@ pub enum Clientbound {
     /// `ClientboundExplodePacket.playerKnockback`.
     Explosion(Vec3),
     /// `ClientboundPlayerPositionPacket`.
-    Teleport { id: i32, pos: Vec3, delta: Vec3, relatives: i32 },
+    Teleport {
+        id: i32,
+        pos: Vec3,
+        delta: Vec3,
+        relatives: i32,
+    },
     /// `ClientboundUpdateAttributesPacket` for the player.
-    Attribute { attr: Attr, base: f64, modifiers: Vec<Modifier> },
+    Attribute {
+        attr: Attr,
+        base: f64,
+        modifiers: Vec<Modifier>,
+    },
     /// `ClientboundUpdateMobEffectPacket` / `RemoveMobEffect` (None).
-    Effect { effect: Effect, amplifier: Option<i32> },
+    Effect {
+        effect: Effect,
+        amplifier: Option<i32>,
+    },
     /// `ClientboundPlayerAbilitiesPacket`.
-    Abilities { flying: bool, may_fly: bool, fly_speed: f32 },
+    Abilities {
+        flying: bool,
+        may_fly: bool,
+        fly_speed: f32,
+    },
     /// `ClientboundGameEventPacket` CHANGE_GAME_MODE, or the login/respawn game mode.
     GameMode(i32),
     /// `ClientboundRespawnPacket`: a new level or a respawn.
@@ -233,7 +280,11 @@ impl PlayerData {
             spawned: false,
             pending_blocks: PendingBlocks::default(),
             timer: TimerState::default(),
-            packets: PacketState { received_tick_end: true, sprint_exempt_next: true, ..Default::default() },
+            packets: PacketState {
+                received_tick_end: true,
+                sprint_exempt_next: true,
+                ..Default::default()
+            },
             attacks: Vec::new(),
             advantage_gained: 0.0,
             alerts: permission >= config.permission_level && config.alerts.enabled_on_join,
@@ -303,7 +354,10 @@ impl Engine {
         self.players.values()
     }
     pub fn find_player(&self, name: &str) -> Option<PlayerKey> {
-        self.players.values().find(|p| p.name.eq_ignore_ascii_case(name)).map(|p| p.key)
+        self.players
+            .values()
+            .find(|p| p.name.eq_ignore_ascii_case(name))
+            .map(|p| p.key)
     }
     /// Takes the actions produced since the last call.
     pub fn drain_actions(&mut self) -> Vec<Action> {
@@ -316,7 +370,10 @@ impl Engine {
     /// The width and height of an entity type, from the registered table or
     /// the built-in one.
     pub fn entity_size(&self, kind: &str) -> Option<(f32, f32)> {
-        self.entity_sizes.get(kind).copied().or_else(|| crate::entities::builtin_size(kind))
+        self.entity_sizes
+            .get(kind)
+            .copied()
+            .or_else(|| crate::entities::builtin_size(kind))
     }
 
     pub fn add_player(&mut self, key: PlayerKey, uuid: u128, name: &str, permission: u8) {
@@ -352,9 +409,16 @@ impl Engine {
     }
 
     /// Records the entities of a level at the start of the current tick.
-    pub fn record_entities(&mut self, dimension: &str, entities: impl IntoIterator<Item = crate::entities::EntitySnapshot>) {
+    pub fn record_entities(
+        &mut self,
+        dimension: &str,
+        entities: impl IntoIterator<Item = crate::entities::EntitySnapshot>,
+    ) {
         let tick = self.tick;
-        self.entities.entry(dimension.to_owned()).or_default().record(tick, entities);
+        self.entities
+            .entry(dimension.to_owned())
+            .or_default()
+            .record(tick, entities);
     }
 
     /// The end of a server tick: one transaction for every player, timeouts
@@ -370,13 +434,19 @@ impl Engine {
                 p.tx.in_flight.pop_front();
             }
             p.tx.in_flight.push_back((id, now, tick));
-            self.actions.push(Action::SendPing { key: p.key, id: (id as i32) | PING_MARK });
+            self.actions.push(Action::SendPing {
+                key: p.key,
+                id: (id as i32) | PING_MARK,
+            });
             if timeout > 0
                 && let Some(&(_, sent, _)) = p.tx.in_flight.front()
                 && now.saturating_sub(sent) > timeout * 1_000_000_000
             {
                 if punish {
-                    self.actions.push(Action::Kick { key: p.key, reason: "Timed out".into() });
+                    self.actions.push(Action::Kick {
+                        key: p.key,
+                        reason: "Timed out".into(),
+                    });
                 } else if now.saturating_sub(p.last_timeout_warning) > 30_000_000_000 {
                     p.last_timeout_warning = now;
                     self.actions.push(Action::Log(format!(
@@ -392,7 +462,9 @@ impl Engine {
 
     /// A packet the server sent `key`, in send order.
     pub fn on_outgoing(&mut self, key: PlayerKey, packet: Clientbound) {
-        let Some(p) = self.players.get_mut(&key) else { return };
+        let Some(p) = self.players.get_mut(&key) else {
+            return;
+        };
         let tx = p.tx.last_sent;
         match packet {
             Clientbound::Ping { .. } => {}
@@ -403,14 +475,31 @@ impl Engine {
                     p.explosion.add(v, tx);
                 }
             }
-            Clientbound::Teleport { id, pos, delta, relatives } => {
-                let setback = p.awaiting_setback.is_some_and(|s| s.distance_squared(pos) < 1e-6);
+            Clientbound::Teleport {
+                id,
+                pos,
+                delta,
+                relatives,
+            } => {
+                let setback = p
+                    .awaiting_setback
+                    .is_some_and(|s| s.distance_squared(pos) < 1e-6);
                 if p.teleports.len() >= 64 {
                     p.teleports.pop_front();
                 }
-                p.teleports.push_back(PendingTeleport { id, pos, delta, relatives, setback });
+                p.teleports.push_back(PendingTeleport {
+                    id,
+                    pos,
+                    delta,
+                    relatives,
+                    setback,
+                });
             }
-            Clientbound::Attribute { attr, base, modifiers } => {
+            Clientbound::Attribute {
+                attr,
+                base,
+                modifiers,
+            } => {
                 if attr == Attr::Gravity {
                     p.movement.point_three.gravity_changed = true;
                 }
@@ -418,11 +507,17 @@ impl Engine {
             }
             Clientbound::Effect { effect, amplifier } => {
                 if effect == Effect::Levitation {
-                    p.movement.point_three.update_levitation(amplifier.or(p.movement.effects.level(effect)));
+                    p.movement
+                        .point_three
+                        .update_levitation(amplifier.or(p.movement.effects.level(effect)));
                 }
                 p.movement.effects.set(effect, amplifier);
             }
-            Clientbound::Abilities { flying, may_fly, fly_speed } => {
+            Clientbound::Abilities {
+                flying,
+                may_fly,
+                fly_speed,
+            } => {
                 p.movement.is_flying = flying;
                 p.movement.may_fly = may_fly;
                 p.movement.fly_speed = fly_speed;
@@ -453,7 +548,13 @@ impl Engine {
     /// Handles the client's packets in order against `world` (the level the
     /// player is in). `now` is a monotonic clock in nanoseconds. Returns one
     /// verdict per packet.
-    pub fn on_incoming(&mut self, key: PlayerKey, packets: &[Serverbound], world: &dyn BlockView, now: u64) -> Vec<Verdict> {
+    pub fn on_incoming(
+        &mut self,
+        key: PlayerKey,
+        packets: &[Serverbound],
+        world: &dyn BlockView,
+        now: u64,
+    ) -> Vec<Verdict> {
         let mut verdicts = Vec::with_capacity(packets.len());
         let Some(mut p) = self.players.remove(&key) else {
             verdicts.resize(packets.len(), Verdict::Keep);
@@ -472,7 +573,13 @@ impl Engine {
         !self.config.enabled || p.exempt || self.config.is_exempt(&p.name)
     }
 
-    fn handle(&mut self, p: &mut PlayerData, packet: &Serverbound, world: &dyn BlockView, now: u64) -> Verdict {
+    fn handle(
+        &mut self,
+        p: &mut PlayerData,
+        packet: &Serverbound,
+        world: &dyn BlockView,
+        now: u64,
+    ) -> Verdict {
         let modify = self.config.setbacks_enabled() && !self.checks_off(p);
         match packet {
             Serverbound::Pong { id } => {
@@ -483,7 +590,12 @@ impl Engine {
                 self.on_accept_teleport(p, *id, *pos, *rot, world);
                 Verdict::Keep
             }
-            Serverbound::Move { pos, rot, on_ground, .. } => self.on_move(p, *pos, *rot, *on_ground, world, now, modify),
+            Serverbound::Move {
+                pos,
+                rot,
+                on_ground,
+                ..
+            } => self.on_move(p, *pos, *rot, *on_ground, world, now, modify),
             Serverbound::TickEnd => {
                 self.on_tick_end(p, world, now);
                 Verdict::Keep
@@ -517,7 +629,11 @@ impl Engine {
             Serverbound::Abilities { flying } => {
                 if *flying && !p.movement.may_fly {
                     self.flag(p, CheckId::BadPacketsI, String::new());
-                    return if modify { Verdict::Cancel } else { Verdict::Keep };
+                    return if modify {
+                        Verdict::Cancel
+                    } else {
+                        Verdict::Keep
+                    };
                 }
                 p.movement.is_flying = *flying && p.movement.may_fly;
                 Verdict::Keep
@@ -526,7 +642,11 @@ impl Engine {
             Serverbound::Interact { entity } => {
                 if *entity == p.entity_id && p.entity_id >= 0 {
                     self.flag(p, CheckId::SelfInteract, String::new());
-                    return if modify { Verdict::Cancel } else { Verdict::Keep };
+                    return if modify {
+                        Verdict::Cancel
+                    } else {
+                        Verdict::Keep
+                    };
                 }
                 Verdict::Keep
             }
@@ -540,7 +660,11 @@ impl Engine {
             Serverbound::HeldSlot { slot } => {
                 if !(0..=8).contains(slot) {
                     self.flag(p, CheckId::BadPacketsY, format!("slot={slot}"));
-                    return if modify { Verdict::Cancel } else { Verdict::Keep };
+                    return if modify {
+                        Verdict::Cancel
+                    } else {
+                        Verdict::Keep
+                    };
                 }
                 if p.packets.last_slot == Some(*slot) {
                     self.flag(p, CheckId::BadPacketsA, format!("slot={slot}"));
@@ -553,7 +677,8 @@ impl Engine {
                 let d = face_offset(*face);
                 let tx = p.tx.last_sent.wrapping_add(1);
                 p.pending_blocks.add(*pos, tx);
-                p.pending_blocks.add([pos[0] + d[0], pos[1] + d[1], pos[2] + d[2]], tx);
+                p.pending_blocks
+                    .add([pos[0] + d[0], pos[1] + d[1], pos[2] + d[2]], tx);
                 self.packet_order_reset(p);
                 Verdict::Keep
             }
@@ -606,7 +731,14 @@ impl Engine {
         let _ = now;
     }
 
-    fn on_accept_teleport(&mut self, p: &mut PlayerData, id: i32, pos: Vec3, rot: (f32, f32), world: &dyn BlockView) {
+    fn on_accept_teleport(
+        &mut self,
+        p: &mut PlayerData,
+        id: i32,
+        pos: Vec3,
+        rot: (f32, f32),
+        world: &dyn BlockView,
+    ) {
         let Some(index) = p.teleports.iter().position(|t| t.id == id) else {
             self.flag(p, CheckId::BadPacketsN, format!("unknown teleport {id}"));
             return;
@@ -616,16 +748,44 @@ impl Engine {
         p.teleports.drain(..index);
         let m = &mut p.movement;
         let target = Vec3::new(
-            if t.relatives & 1 != 0 { m.x + t.pos.x } else { t.pos.x },
-            if t.relatives & 2 != 0 { m.y + t.pos.y } else { t.pos.y },
-            if t.relatives & 4 != 0 { m.z + t.pos.z } else { t.pos.z },
+            if t.relatives & 1 != 0 {
+                m.x + t.pos.x
+            } else {
+                t.pos.x
+            },
+            if t.relatives & 2 != 0 {
+                m.y + t.pos.y
+            } else {
+                t.pos.y
+            },
+            if t.relatives & 4 != 0 {
+                m.z + t.pos.z
+            } else {
+                t.pos.z
+            },
         );
         // 26.3 clients send where they ended up: it must be the target.
-        let to = if pos.is_finite() && pos.distance_squared(target) < 1e-4 { pos } else { target };
+        let to = if pos.is_finite() && pos.distance_squared(target) < 1e-4 {
+            pos
+        } else {
+            target
+        };
         let velocity = Vec3::new(
-            if t.relatives & 32 != 0 { m.client_velocity.x + t.delta.x } else { t.delta.x },
-            if t.relatives & 64 != 0 { m.client_velocity.y + t.delta.y } else { t.delta.y },
-            if t.relatives & 128 != 0 { m.client_velocity.z + t.delta.z } else { t.delta.z },
+            if t.relatives & 32 != 0 {
+                m.client_velocity.x + t.delta.x
+            } else {
+                t.delta.x
+            },
+            if t.relatives & 64 != 0 {
+                m.client_velocity.y + t.delta.y
+            } else {
+                t.delta.y
+            },
+            if t.relatives & 128 != 0 {
+                m.client_velocity.z + t.delta.z
+            } else {
+                t.delta.z
+            },
         );
         if rot.0.is_finite() && rot.1.is_finite() {
             (m.last_yaw, m.last_pitch) = (m.yaw, m.pitch);
@@ -636,7 +796,12 @@ impl Engine {
         let mut ex = std::mem::take(&mut p.explosion);
         {
             let mut cx = self.context(world, &mut kb, &mut ex, false);
-            let update = PositionUpdate { to, on_ground: false, is_teleport: true, teleport_velocity: if rotate_delta { None } else { Some(velocity) } };
+            let update = PositionUpdate {
+                to,
+                on_ground: false,
+                is_teleport: true,
+                teleport_velocity: if rotate_delta { None } else { Some(velocity) },
+            };
             prediction::handle_teleport(&mut p.movement, &mut cx, update);
         }
         p.kb = kb;
@@ -649,7 +814,10 @@ impl Engine {
         p.packets.no_reminder_ticks = 0;
         p.last_good = Some(to);
         p.spawned = true;
-        if t.setback || p.awaiting_setback.is_some_and(|s| s.distance_squared(to) < 1e-6) {
+        if t.setback
+            || p.awaiting_setback
+                .is_some_and(|s| s.distance_squared(to) < 1e-6)
+        {
             p.awaiting_setback = None;
             p.setback_ticks_complete = 0;
         }
@@ -657,7 +825,13 @@ impl Engine {
         // packetPlayerOnGround as it was).
     }
 
-    fn context<'a>(&self, world: &'a dyn BlockView, kb: &'a mut KnockbackHandler, ex: &'a mut ExplosionHandler, disallow_stepping: bool) -> Context<'a> {
+    fn context<'a>(
+        &self,
+        world: &'a dyn BlockView,
+        kb: &'a mut KnockbackHandler,
+        ex: &'a mut ExplosionHandler,
+        disallow_stepping: bool,
+    ) -> Context<'a> {
         Context {
             world,
             kb,
@@ -669,20 +843,37 @@ impl Engine {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn on_move(&mut self, p: &mut PlayerData, pos: Option<Vec3>, rot: Option<(f32, f32)>, on_ground: bool, world: &dyn BlockView, now: u64, modify: bool) -> Verdict {
+    fn on_move(
+        &mut self,
+        p: &mut PlayerData,
+        pos: Option<Vec3>,
+        rot: Option<(f32, f32)>,
+        on_ground: bool,
+        world: &dyn BlockView,
+        now: u64,
+        modify: bool,
+    ) -> Verdict {
         let mut verdict = Verdict::Keep;
         // CrashC: non-finite values.
-        if pos.is_some_and(|v| !v.is_finite()) || rot.is_some_and(|r| !r.0.is_finite() || !r.1.is_finite()) {
+        if pos.is_some_and(|v| !v.is_finite())
+            || rot.is_some_and(|r| !r.0.is_finite() || !r.1.is_finite())
+        {
             self.flag(p, CheckId::CrashC, String::new());
             return Verdict::Keep; // Horizon disconnects for these itself.
         }
         // CrashA: beyond the hard world border.
         if let Some(v) = pos
-            && (v.x.abs() > 2.9999999e7 || v.z.abs() > 2.9999999e7 || v.y.abs() > f64::from(i32::MAX))
+            && (v.x.abs() > 2.9999999e7
+                || v.z.abs() > 2.9999999e7
+                || v.y.abs() > f64::from(i32::MAX))
         {
             self.flag(p, CheckId::CrashA, String::new());
             self.request_setback(p);
-            return if modify { Verdict::Cancel } else { Verdict::Keep };
+            return if modify {
+                Verdict::Cancel
+            } else {
+                Verdict::Keep
+            };
         }
         // BadPacketsD.
         if let Some((_, pitch)) = rot
@@ -695,7 +886,11 @@ impl Engine {
         }
         // TickTimer: each movement packet must be followed by a tick end.
         if !p.packets.received_tick_end {
-            self.flag(p, CheckId::TickTimer, format!("type=flying, packets={}", p.packets.flying_packets));
+            self.flag(
+                p,
+                CheckId::TickTimer,
+                format!("type=flying, packets={}", p.packets.flying_packets),
+            );
         }
         p.packets.received_tick_end = false;
         p.packets.flying_packets += 1;
@@ -725,7 +920,8 @@ impl Engine {
 
         if !p.spawned || p.movement.in_vehicle {
             p.movement.packet_on_ground = on_ground;
-            p.movement.did_last_last_movement_include_position = p.movement.did_last_movement_include_position;
+            p.movement.did_last_last_movement_include_position =
+                p.movement.did_last_movement_include_position;
             p.movement.did_last_movement_include_position = pos.is_some();
             p.movement.did_send_movement_before_tick_end = true;
             if let Some(v) = pos {
@@ -748,7 +944,8 @@ impl Engine {
             let m = &mut p.movement;
             let feasible = !on_ground
                 || (collisions::slow_could_point_three_hit_ground(m, world, m.x, m.y, m.z)
-                    && !(m.client_velocity.y > 0.06 && !m.uncertainty.was_affected_by_stuck_speed()));
+                    && !(m.client_velocity.y > 0.06
+                        && !m.uncertainty.was_affected_by_stuck_speed()));
             if feasible {
                 m.last_on_ground = on_ground;
                 m.client_claims_last_on_ground = on_ground;
@@ -759,7 +956,8 @@ impl Engine {
         }
         // NoFall for packets without a position.
         let mut nofall = false;
-        if on_ground && pos.is_none() && p.awaiting_setback.is_none() && !self.near_ground(p, world) {
+        if on_ground && pos.is_none() && p.awaiting_setback.is_none() && !self.near_ground(p, world)
+        {
             self.flag_with_setback(p, CheckId::NoFall, String::new());
             nofall = true;
         }
@@ -774,14 +972,22 @@ impl Engine {
         if nofall && modify && verdict == Verdict::Keep {
             verdict = Verdict::SetOnGround(false);
         }
-        p.movement.did_last_last_movement_include_position = p.movement.did_last_movement_include_position;
+        p.movement.did_last_last_movement_include_position =
+            p.movement.did_last_movement_include_position;
         p.movement.did_last_movement_include_position = pos.is_some();
         p.movement.did_send_movement_before_tick_end = true;
         self.tick_reach(p);
         verdict
     }
 
-    fn rotation_checks(&mut self, p: &mut PlayerData, old_yaw: f32, old_pitch: f32, yaw: f32, pitch: f32) {
+    fn rotation_checks(
+        &mut self,
+        p: &mut PlayerData,
+        old_yaw: f32,
+        old_pitch: f32,
+        yaw: f32,
+        pitch: f32,
+    ) {
         let delta_yaw = yaw - old_yaw;
         if p.packets.aim_exempt {
             p.packets.aim_exempt = false;
@@ -789,7 +995,11 @@ impl Engine {
             return;
         }
         // AimModulo360.
-        if yaw < 360.0 && yaw > -360.0 && delta_yaw.abs() > 320.0 && p.packets.last_delta_yaw.abs() < 30.0 {
+        if yaw < 360.0
+            && yaw > -360.0
+            && delta_yaw.abs() > 320.0
+            && p.packets.last_delta_yaw.abs() < 30.0
+        {
             self.flag(p, CheckId::AimModulo360, format!("delta={delta_yaw:.1}"));
         } else {
             p.violations.reward(&self.config, CheckId::AimModulo360);
@@ -804,10 +1014,13 @@ impl Engine {
     /// `NoFall.isNearGround`.
     fn near_ground(&self, p: &PlayerData, world: &dyn BlockView) -> bool {
         let m = &p.movement;
-        let feet = m.box_at(m.x, m.y, m.z, 0.6, 0.001).inflate(MOVEMENT_THRESHOLD);
+        let feet = m
+            .box_at(m.x, m.y, m.z, 0.6, 0.001)
+            .inflate(MOVEMENT_THRESHOLD);
         let mut boxes = Vec::new();
         world.collision_boxes(feet, &mut boxes);
-        boxes.iter().any(|b| feet.collides_vertically(b)) || p.pending_blocks.touches(feet.inflate(1.0))
+        boxes.iter().any(|b| feet.collides_vertically(b))
+            || p.pending_blocks.touches(feet.inflate(1.0))
     }
 
     fn timer_tick(&mut self, p: &mut PlayerData, now: u64) {
@@ -826,7 +1039,10 @@ impl Engine {
             p.timer.balance -= 50_000_000;
         }
         let drift = (self.config.timer.drift_ms * 1e6) as i64;
-        p.timer.balance = p.timer.balance.max(p.timer.last_movement_player_clock - drift);
+        p.timer.balance = p
+            .timer
+            .balance
+            .max(p.timer.last_movement_player_clock - drift);
     }
 
     fn on_tick_end(&mut self, p: &mut PlayerData, world: &dyn BlockView, now: u64) {
@@ -853,11 +1069,22 @@ impl Engine {
 
     /// One position: the prediction and the checks that follow it. Returns
     /// whether the client's ground flag was found false.
-    fn on_position(&mut self, p: &mut PlayerData, to: Vec3, on_ground: bool, world: &dyn BlockView, now: u64) -> bool {
+    fn on_position(
+        &mut self,
+        p: &mut PlayerData,
+        to: Vec3,
+        on_ground: bool,
+        world: &dyn BlockView,
+        now: u64,
+    ) -> bool {
         let _ = now;
         let m = &mut p.movement;
         (m.last_x, m.last_y, m.last_z) = (m.x, m.y, m.z);
-        let to = Vec3::new(to.x.clamp(-3.0e7, 3.0e7), to.y.clamp(-2.0e7, 2.0e7), to.z.clamp(-3.0e7, 3.0e7));
+        let to = Vec3::new(
+            to.x.clamp(-3.0e7, 3.0e7),
+            to.y.clamp(-2.0e7, 2.0e7),
+            to.z.clamp(-3.0e7, 3.0e7),
+        );
         (m.x, m.y, m.z) = (to.x, to.y, to.z);
 
         // Knockback and explosions the client must or may have applied.
@@ -876,8 +1103,16 @@ impl Engine {
         }
 
         // Decline to judge what we cannot know.
-        let area = m.pose_box_at(m.last_x, m.last_y, m.last_z).union(m.pose_box_at(m.x, m.y, m.z)).inflate(1.0);
-        let (x0, z0, x1, z1) = (area.min_x.floor() as i32, area.min_z.floor() as i32, area.max_x.floor() as i32, area.max_z.floor() as i32);
+        let area = m
+            .pose_box_at(m.last_x, m.last_y, m.last_z)
+            .union(m.pose_box_at(m.x, m.y, m.z))
+            .inflate(1.0);
+        let (x0, z0, x1, z1) = (
+            area.min_x.floor() as i32,
+            area.min_z.floor() as i32,
+            area.max_x.floor() as i32,
+            area.max_z.floor() as i32,
+        );
         let unknown_world = !world.are_chunks_loaded(x0, z0, x1, z1);
         let unconfirmed_blocks = p.pending_blocks.touches(area);
         let awaiting_setback = p.awaiting_setback.is_some();
@@ -889,7 +1124,12 @@ impl Engine {
         let start = std::time::Instant::now();
         let mut result = {
             let mut cx = self.context(world, &mut kb, &mut ex, disallow_stepping);
-            let update = PositionUpdate { to, on_ground, is_teleport: false, teleport_velocity: None };
+            let update = PositionUpdate {
+                to,
+                on_ground,
+                is_teleport: false,
+                teleport_velocity: None,
+            };
             prediction::check(&mut p.movement, &mut cx, update)
         };
         self.stats.prediction_nanos += start.elapsed().as_nanos() as u64;
@@ -907,7 +1147,12 @@ impl Engine {
             None
         };
         if let Some(reason) = skip {
-            result = PredictionComplete { checked: false, skipped: Some(reason), offset: 0.0, ..result };
+            result = PredictionComplete {
+                checked: false,
+                skipped: Some(reason),
+                offset: 0.0,
+                ..result
+            };
             KnockbackHandler::force_exempt(&mut p.movement);
             ExplosionHandler::force_exempt(&mut p.movement);
         }
@@ -927,9 +1172,10 @@ impl Engine {
             let offset = result.offset;
             if offset >= s.threshold || offset >= s.immediate_setback_threshold {
                 p.advantage_gained += offset;
-                let flagged = self.flag(p, CheckId::Simulation, format!("{}", format_offset(offset)));
+                let flagged = self.flag(p, CheckId::Simulation, format_offset(offset));
                 if flagged
-                    && (p.advantage_gained >= s.max_advantage || offset >= s.immediate_setback_threshold)
+                    && (p.advantage_gained >= s.max_advantage
+                        || offset >= s.immediate_setback_threshold)
                     && p.violations.vl(CheckId::Simulation) >= s.setback_violation_threshold
                 {
                     self.request_setback(p);
@@ -953,9 +1199,23 @@ impl Engine {
         }
         // AntiKB / AntiExplosion.
         let cfg = self.config.velocity();
-        match kb.on_prediction_complete(&mut p.movement, result.offset, result.checked, result.teleport, &cfg) {
-            VelocityVerdict::Flag { offset, ignored, wants_setback } => {
-                let text = if ignored { "ignored knockback".to_owned() } else { format!("o: {}", format_offset(offset)) };
+        match kb.on_prediction_complete(
+            &mut p.movement,
+            result.offset,
+            result.checked,
+            result.teleport,
+            &cfg,
+        ) {
+            VelocityVerdict::Flag {
+                offset,
+                ignored,
+                wants_setback,
+            } => {
+                let text = if ignored {
+                    "ignored knockback".to_owned()
+                } else {
+                    format!("o: {}", format_offset(offset))
+                };
                 if self.flag(p, CheckId::AntiKB, text) && wants_setback {
                     self.setback_if_above_vl(p, CheckId::AntiKB);
                 }
@@ -964,9 +1224,19 @@ impl Engine {
             VelocityVerdict::None => {}
         }
         if result.checked {
-            match ex.on_prediction_complete(&mut p.movement, result.offset, self.config.explosion.threshold) {
-                VelocityVerdict::Flag { offset, ignored, .. } => {
-                    let text = if ignored { "ignored explosion".to_owned() } else { format!("o: {}", format_offset(offset)) };
+            match ex.on_prediction_complete(
+                &mut p.movement,
+                result.offset,
+                self.config.explosion.threshold,
+            ) {
+                VelocityVerdict::Flag {
+                    offset, ignored, ..
+                } => {
+                    let text = if ignored {
+                        "ignored explosion".to_owned()
+                    } else {
+                        format!("o: {}", format_offset(offset))
+                    };
                     self.flag_with_setback(p, CheckId::AntiExplosion, text);
                 }
                 VelocityVerdict::Taken => p.violations.reward(&self.config, CheckId::AntiExplosion),
@@ -990,8 +1260,12 @@ impl Engine {
     }
 
     fn debug_line(&mut self, p: &PlayerData, r: &PredictionComplete) {
-        let watchers: Vec<PlayerKey> =
-            self.players.values().filter(|s| s.debug_targets.contains(&p.key)).map(|s| s.key).collect();
+        let watchers: Vec<PlayerKey> = self
+            .players
+            .values()
+            .filter(|s| s.debug_targets.contains(&p.key))
+            .map(|s| s.key)
+            .collect();
         if watchers.is_empty() {
             return;
         }
@@ -1012,14 +1286,21 @@ impl Engine {
             ),
         };
         for key in watchers {
-            self.actions.push(Action::Message { key, text: text.clone() });
+            self.actions.push(Action::Message {
+                key,
+                text: text.clone(),
+            });
         }
     }
 
     fn on_attack(&mut self, p: &mut PlayerData, entity: i32, modify: bool) -> Verdict {
         if entity == p.entity_id && p.entity_id >= 0 {
             self.flag(p, CheckId::SelfInteract, String::new());
-            return if modify { Verdict::Cancel } else { Verdict::Keep };
+            return if modify {
+                Verdict::Cancel
+            } else {
+                Verdict::Keep
+            };
         }
         // PacketOrderB: 1.9+ clients swing after the attack, and swing at
         // least once between attacks.
@@ -1054,23 +1335,36 @@ impl Engine {
         }
         let attacks = std::mem::take(&mut p.attacks);
         let m = &p.movement;
-        if m.game_mode == GameMode::Creative || m.game_mode == GameMode::Spectator || m.in_vehicle || self.checks_off(p) {
+        if m.game_mode == GameMode::Creative
+            || m.game_mode == GameMode::Spectator
+            || m.in_vehicle
+            || self.checks_off(p)
+        {
             return;
         }
-        let Some(history) = self.entities.get(&p.dimension) else { return };
+        let Some(history) = self.entities.get(&p.dimension) else {
+            return;
+        };
         let base_reach = m.attr(Attr::EntityInteractionRange);
         let mut margin = self.config.reach.threshold;
         if !m.did_last_last_movement_include_position {
             margin += MOVEMENT_THRESHOLD;
         }
-        let looks = [look_vector(m.yaw, m.pitch), look_vector(m.last_yaw, m.pitch), look_vector(m.last_yaw, m.last_pitch)];
+        let looks = [
+            look_vector(m.yaw, m.pitch),
+            look_vector(m.last_yaw, m.pitch),
+            look_vector(m.last_yaw, m.last_pitch),
+        ];
         let eyes = m.possible_eye_heights();
         let mut results = Vec::new();
         for a in attacks {
             if !history.covers(a.from_tick) {
                 continue;
             }
-            let Some((target, snapshot)) = history.possible_box(a.entity, a.from_tick, a.to_tick) else { continue };
+            let Some((target, snapshot)) = history.possible_box(a.entity, a.from_tick, a.to_tick)
+            else {
+                continue;
+            };
             if !snapshot.checkable || snapshot.riding {
                 continue;
             }
@@ -1097,7 +1391,11 @@ impl Engine {
             if min_distance == f64::MAX {
                 self.flag(p, CheckId::Hitboxes, format!("entity={entity}"));
             } else if min_distance > max_reach {
-                self.flag(p, CheckId::Reach, format!("{min_distance:.5} blocks, entity={entity}"));
+                self.flag(
+                    p,
+                    CheckId::Reach,
+                    format!("{min_distance:.5} blocks, entity={entity}"),
+                );
             } else {
                 p.violations.reward(&self.config, CheckId::Reach);
             }
@@ -1111,7 +1409,9 @@ impl Engine {
         if p.awaiting_setback.is_some() {
             return;
         }
-        let Some(pos) = p.last_good.or(Some(p.movement.last_position())) else { return };
+        let Some(pos) = p.last_good.or(Some(p.movement.last_position())) else {
+            return;
+        };
         p.awaiting_setback = Some(pos);
         p.setback_ticks_complete = 1;
         self.actions.push(Action::Setback { key: p.key, pos });
@@ -1144,11 +1444,21 @@ impl Engine {
         if self.checks_off(p) {
             return false;
         }
-        let Some(flag) = p.violations.flag(&self.config, c, verbose) else { return false };
+        let Some(flag) = p.violations.flag(&self.config, c, verbose) else {
+            return false;
+        };
         self.alert(p, &flag);
         if flag.kick {
-            self.actions.push(Action::Kick { key: p.key, reason: format!("Unfair advantage ({})", c.info().name) });
-            self.actions.push(Action::Log(format!("[Grim] Kicked {} for {} (x{:.0})", p.name, c.info().name, flag.vl)));
+            self.actions.push(Action::Kick {
+                key: p.key,
+                reason: format!("Unfair advantage ({})", c.info().name),
+            });
+            self.actions.push(Action::Log(format!(
+                "[Grim] Kicked {} for {} (x{:.0})",
+                p.name,
+                c.info().name,
+                flag.vl
+            )));
         }
         true
     }
@@ -1180,7 +1490,10 @@ impl Engine {
             recipients.push(p.key);
         }
         for key in recipients {
-            self.actions.push(Action::Message { key, text: text.clone() });
+            self.actions.push(Action::Message {
+                key,
+                text: text.clone(),
+            });
         }
         if flag.alert && self.config.alerts.print_to_console {
             self.actions.push(Action::Log(text));
@@ -1207,7 +1520,11 @@ fn face_offset(face: i32) -> [i32; 3] {
 
 /// `Check.formatOffset`.
 pub fn format_offset(offset: f64) -> String {
-    if offset > 0.001 { format!("{offset:.5}") } else { format!("{offset:.2e}") }
+    if offset > 0.001 {
+        format!("{offset:.5}")
+    } else {
+        format!("{offset:.2e}")
+    }
 }
 
 /// `Mth.wrapDegrees` re-export for adapters.

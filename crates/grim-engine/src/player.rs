@@ -1,6 +1,6 @@
 // Grim-Horizon: a Rust port of Grim Anticheat (https://github.com/GrimAnticheat/Grim).
 // Copyright (C) GrimAC contributors (original Java), Grim-Horizon contributors (port).
-// Licensed under the GNU General Public License v3.0 only; see LICENSE.
+// Licensed under the GNU General Public License, version 3 or (at your option) any later version; see LICENSE.
 
 //! Per-player movement state: the parts of Grim's `GrimPlayer`,
 //! `UncertaintyHandler`, `VectorData`, `PacketEntitySelf` (attributes and
@@ -175,19 +175,35 @@ pub struct AttributeInstance {
 impl AttributeInstance {
     fn new(attr: Attr) -> Self {
         let base = attr.default_base();
-        Self { base, modifiers: Vec::new(), value: base }
+        Self {
+            base,
+            modifiers: Vec::new(),
+            value: base,
+        }
     }
     /// `AttributeInstance.calculateValue`.
     fn recalculate(&mut self, attr: Attr) {
         let mut v = self.base;
-        for m in self.modifiers.iter().filter(|m| m.op == ModifierOp::AddValue) {
+        for m in self
+            .modifiers
+            .iter()
+            .filter(|m| m.op == ModifierOp::AddValue)
+        {
             v += m.amount;
         }
         let mut total = v;
-        for m in self.modifiers.iter().filter(|m| m.op == ModifierOp::AddMultipliedBase) {
+        for m in self
+            .modifiers
+            .iter()
+            .filter(|m| m.op == ModifierOp::AddMultipliedBase)
+        {
             total += v * m.amount;
         }
-        for m in self.modifiers.iter().filter(|m| m.op == ModifierOp::AddMultipliedTotal) {
+        for m in self
+            .modifiers
+            .iter()
+            .filter(|m| m.op == ModifierOp::AddMultipliedTotal)
+        {
             total *= 1.0 + m.amount;
         }
         let (lo, hi) = attr.range();
@@ -205,7 +221,12 @@ pub struct Attributes {
 
 impl Default for Attributes {
     fn default() -> Self {
-        Self { instances: Attr::ALL.iter().map(|a| AttributeInstance::new(*a)).collect() }
+        Self {
+            instances: Attr::ALL
+                .iter()
+                .map(|a| AttributeInstance::new(*a))
+                .collect(),
+        }
     }
 }
 
@@ -222,7 +243,10 @@ impl Attributes {
     pub fn set(&mut self, attr: Attr, base: f64, modifiers: Vec<Modifier>) {
         let inst = &mut self.instances[Self::index(attr)];
         inst.base = base;
-        inst.modifiers = modifiers.into_iter().filter(|m| m.id != SPRINT_MODIFIER).collect();
+        inst.modifiers = modifiers
+            .into_iter()
+            .filter(|m| m.id != SPRINT_MODIFIER)
+            .collect();
         inst.recalculate(attr);
     }
     pub fn instance(&self, attr: Attr) -> &AttributeInstance {
@@ -349,11 +373,23 @@ pub struct VectorData {
 
 impl VectorData {
     pub fn new(vector: Vec3, ty: u32) -> Self {
-        Self { vector, types: ty, input: None, stuck: None, origin: vector }
+        Self {
+            vector,
+            types: ty,
+            input: None,
+            stuck: None,
+            origin: vector,
+        }
     }
     /// `returnNewModified`.
     pub fn modified(&self, vector: Vec3, ty: u32) -> Self {
-        Self { vector, types: (self.types & vt::STICKY) | ty, input: self.input, stuck: self.stuck, origin: self.origin }
+        Self {
+            vector,
+            types: (self.types & vt::STICKY) | ty,
+            input: self.input,
+            stuck: self.stuck,
+            origin: self.origin,
+        }
     }
     #[inline]
     pub fn has(&self, flag: u32) -> bool {
@@ -402,7 +438,12 @@ pub struct VelocityData {
 
 impl VelocityData {
     pub fn new(vector: Vec3, transaction: u32) -> Self {
-        Self { vector, transaction, offset: f64::from(i32::MAX), is_setback: false }
+        Self {
+            vector,
+            transaction,
+            offset: f64::from(i32::MAX),
+            is_setback: false,
+        }
     }
 }
 
@@ -535,7 +576,9 @@ impl Default for PointThree {
 
 impl PointThree {
     pub fn can_predict_next_vertical_movement(&self) -> bool {
-        !self.gravity_changed && self.max_positive_levitation == i32::MIN && self.min_negative_levitation == i32::MAX
+        !self.gravity_changed
+            && self.max_positive_levitation == i32::MIN
+            && self.min_negative_levitation == i32::MAX
     }
     pub fn positive_levitation(&self, y: f64) -> f64 {
         if self.max_positive_levitation == i32::MIN {
@@ -847,8 +890,14 @@ impl Movement {
             || self.is_flying
             || self.is_dead
             || self.in_bed
-            || self.uncertainty.last_flying_status_change.has_occurred_since(30)
-            || self.uncertainty.last_hard_colliding_entity.has_occurred_since(3)
+            || self
+                .uncertainty
+                .last_flying_status_change
+                .has_occurred_since(30)
+            || self
+                .uncertainty
+                .last_hard_colliding_entity
+                .has_occurred_since(3)
     }
     /// `wouldCollisionResultFlagGroundSpoof`.
     pub fn would_collision_result_flag_ground_spoof(&self, input_y: f64, collision_y: f64) -> bool {
@@ -857,7 +906,10 @@ impl Movement {
         if self.exempt_on_ground() {
             return false;
         }
-        if input_y == -crate::math::COLLISION_EPSILON && collision_y > -crate::math::COLLISION_EPSILON && collision_y <= 0.0 {
+        if input_y == -crate::math::COLLISION_EPSILON
+            && collision_y > -crate::math::COLLISION_EPSILON
+            && collision_y <= 0.0
+        {
             return false;
         }
         calculated_on_ground != self.on_ground
@@ -890,8 +942,16 @@ mod tests {
             Attr::MovementSpeed,
             0.1,
             vec![
-                Modifier { id: "minecraft:effect.speed".into(), amount: 0.2, op: ModifierOp::AddMultipliedTotal },
-                Modifier { id: SPRINT_MODIFIER.into(), amount: 0.3, op: ModifierOp::AddMultipliedTotal },
+                Modifier {
+                    id: "minecraft:effect.speed".into(),
+                    amount: 0.2,
+                    op: ModifierOp::AddMultipliedTotal,
+                },
+                Modifier {
+                    id: SPRINT_MODIFIER.into(),
+                    amount: 0.3,
+                    op: ModifierOp::AddMultipliedTotal,
+                },
             ],
         );
         // The sprint modifier is dropped, Speed I multiplies the total by 1.2.

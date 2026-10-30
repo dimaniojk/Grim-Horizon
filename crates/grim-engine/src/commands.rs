@@ -1,6 +1,6 @@
 // Grim-Horizon: a Rust port of Grim Anticheat (https://github.com/GrimAnticheat/Grim).
 // Copyright (C) GrimAC contributors (original Java), Grim-Horizon contributors (port).
-// Licensed under the GNU General Public License v3.0 only; see LICENSE.
+// Licensed under the GNU General Public License, version 3 or (at your option) any later version; see LICENSE.
 
 //! `/grim` commands (Grim's `GrimAlerts`, `GrimVerbose`, `GrimProfile`,
 //! `GrimReload`, `GrimDebug`, ...), answered as plain text lines.
@@ -53,23 +53,41 @@ impl Engine {
         let arg = words.next();
         match sub.as_str() {
             "alerts" => {
-                let Some(key) = sender else { return out.line("The console always receives alerts in the log.") };
+                let Some(key) = sender else {
+                    return out.line("The console always receives alerts in the log.");
+                };
                 let p = self.player_mut(key).expect("checked above");
                 p.alerts = !p.alerts;
                 let on = p.alerts;
-                out.line(if on { "Alerts enabled" } else { "Alerts disabled" })
+                out.line(if on {
+                    "Alerts enabled"
+                } else {
+                    "Alerts disabled"
+                })
             }
             "verbose" => {
-                let Some(key) = sender else { return out.line("Verbose output is only for players.") };
+                let Some(key) = sender else {
+                    return out.line("Verbose output is only for players.");
+                };
                 let p = self.player_mut(key).expect("checked above");
                 p.verbose = !p.verbose;
                 let on = p.verbose;
-                out.line(if on { "Verbose enabled" } else { "Verbose disabled" })
+                out.line(if on {
+                    "Verbose enabled"
+                } else {
+                    "Verbose disabled"
+                })
             }
             "debug" => {
-                let Some(key) = sender else { return out.line("Debug output is only for players.") };
-                let Some(name) = arg else { return out.line("Usage: /grim debug <player>") };
-                let Some(target) = self.find_player(name) else { return out.line(format!("{name} is not online")) };
+                let Some(key) = sender else {
+                    return out.line("Debug output is only for players.");
+                };
+                let Some(name) = arg else {
+                    return out.line("Usage: /grim debug <player>");
+                };
+                let Some(target) = self.find_player(name) else {
+                    return out.line(format!("{name} is not online"));
+                };
                 let p = self.player_mut(key).expect("checked above");
                 let on = if p.debug_targets.remove(&target) {
                     false
@@ -77,31 +95,48 @@ impl Engine {
                     p.debug_targets.insert(target);
                     true
                 };
-                out.line(format!("Debug for {name} {}", if on { "enabled" } else { "disabled" }))
+                out.line(format!(
+                    "Debug for {name} {}",
+                    if on { "enabled" } else { "disabled" }
+                ))
             }
             "exempt" => {
-                let Some(name) = arg else { return out.line("Usage: /grim exempt <player>") };
-                let Some(target) = self.find_player(name) else { return out.line(format!("{name} is not online")) };
+                let Some(name) = arg else {
+                    return out.line("Usage: /grim exempt <player>");
+                };
+                let Some(target) = self.find_player(name) else {
+                    return out.line(format!("{name} is not online"));
+                };
                 let p = self.player_mut(target).expect("found");
                 p.exempt = !p.exempt;
                 let on = p.exempt;
-                out.line(format!("{name} is {} exempt", if on { "now" } else { "no longer" }))
+                out.line(format!(
+                    "{name} is {} exempt",
+                    if on { "now" } else { "no longer" }
+                ))
             }
             "profile" => {
-                let Some(name) = arg else { return out.line("Usage: /grim profile <player>") };
-                let Some(target) = self.find_player(name) else { return out.line(format!("{name} is not online")) };
+                let Some(name) = arg else {
+                    return out.line("Usage: /grim profile <player>");
+                };
+                let Some(target) = self.find_player(name) else {
+                    return out.line(format!("{name} is not online"));
+                };
                 let p = self.player(target).expect("found");
                 let m = &p.movement;
                 let mut o = out.line(format!("--- Grim profile: {} ---", p.name));
                 o = o.line(format!(
                     "Ping (transactions): {}",
-                    p.transaction_ping_ms(now).map_or("unknown".to_owned(), |v| format!("{v:.0} ms"))
+                    p.transaction_ping_ms(now)
+                        .map_or("unknown".to_owned(), |v| format!("{v:.0} ms"))
                 ));
                 o = o.line(format!(
                     "Predictions: {} ({} not checked{}), last offset {}",
                     p.predictions,
                     p.skipped,
-                    p.last_skip_reason.map(|r| format!(", last: {r}")).unwrap_or_default(),
+                    p.last_skip_reason
+                        .map(|r| format!(", last: {r}"))
+                        .unwrap_or_default(),
                     format_offset(p.last_offset)
                 ));
                 o = o.line(format!(
@@ -125,13 +160,22 @@ impl Engine {
                 for c in CheckId::ALL {
                     let info = c.info();
                     let enabled = self.config.check(info.config_name).enabled;
-                    o = o.line(format!("  {} [{}] - {}", info.name, if enabled { "on" } else { "off" }, info.description));
+                    o = o.line(format!(
+                        "  {} [{}] - {}",
+                        info.name,
+                        if enabled { "on" } else { "off" },
+                        info.description
+                    ));
                 }
                 o
             }
             "stats" => {
                 let s = self.stats;
-                let avg = if s.predictions == 0 { 0.0 } else { s.prediction_nanos as f64 / s.predictions as f64 / 1000.0 };
+                let avg = if s.predictions == 0 {
+                    0.0
+                } else {
+                    s.prediction_nanos as f64 / s.predictions as f64 / 1000.0
+                };
                 out.line(format!(
                     "{} players, {} packets, {} predictions, {:.1} µs per prediction",
                     self.players().count(),
@@ -140,7 +184,10 @@ impl Engine {
                     avg
                 ))
             }
-            "reload" => CommandOutcome { lines: Vec::new(), reload: true },
+            "reload" => CommandOutcome {
+                lines: Vec::new(),
+                reload: true,
+            },
             _ => {
                 let mut o = out;
                 for l in HELP {
@@ -168,9 +215,18 @@ mod tests {
         let mut e = Engine::new(Config::default());
         e.add_player(1, 1, "Guest", 0);
         e.add_player(2, 2, "Admin", 4);
-        assert_eq!(e.command(Some(1), "alerts", 0).lines, vec!["You do not have permission to use /grim."]);
-        assert_eq!(e.command(Some(2), "alerts", 0).lines, vec!["Alerts disabled"]);
-        assert_eq!(e.command(Some(2), "alerts", 0).lines, vec!["Alerts enabled"]);
+        assert_eq!(
+            e.command(Some(1), "alerts", 0).lines,
+            vec!["You do not have permission to use /grim."]
+        );
+        assert_eq!(
+            e.command(Some(2), "alerts", 0).lines,
+            vec!["Alerts disabled"]
+        );
+        assert_eq!(
+            e.command(Some(2), "alerts", 0).lines,
+            vec!["Alerts enabled"]
+        );
         assert!(e.command(None, "reload", 0).reload);
         assert!(e.command(None, "profile Guest", 0).lines[0].contains("Guest"));
     }

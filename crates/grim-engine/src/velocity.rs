@@ -1,6 +1,6 @@
 // Grim-Horizon: a Rust port of Grim Anticheat (https://github.com/GrimAnticheat/Grim).
 // Copyright (C) GrimAC contributors (original Java), Grim-Horizon contributors (port).
-// Licensed under the GNU General Public License v3.0 only; see LICENSE.
+// Licensed under the GNU General Public License, version 3 or (at your option) any later version; see LICENSE.
 
 //! Ports of Grim's `KnockbackHandler` (AntiKB) and `ExplosionHandler`.
 //!
@@ -27,7 +27,13 @@ pub struct VelocityConfig {
 
 impl Default for VelocityConfig {
     fn default() -> Self {
-        Self { threshold: 0.001, max_advantage: 1.0, immediate_setback_threshold: 0.1, setback_decay_multiplier: 0.999, max_ceiling: 4.0 }
+        Self {
+            threshold: 0.001,
+            max_advantage: 1.0,
+            immediate_setback_threshold: 0.1,
+            setback_decay_multiplier: 0.999,
+            max_ceiling: 4.0,
+        }
     }
 }
 
@@ -40,7 +46,11 @@ pub enum VelocityVerdict {
     Taken,
     /// The required velocity was not taken: `offset` is how far off the best
     /// prediction with it applied was (`i32::MAX` when it was ignored).
-    Flag { offset: f64, ignored: bool, wants_setback: bool },
+    Flag {
+        offset: f64,
+        ignored: bool,
+        wants_setback: bool,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -68,10 +78,16 @@ impl KnockbackHandler {
         self.first_bread_only = None;
         while let Some(data) = self.first_bread_map.front().copied() {
             if data.transaction == transaction {
-                self.first_bread_only = Some(VelocityData { offset: f64::from(i32::MAX), ..data });
+                self.first_bread_only = Some(VelocityData {
+                    offset: f64::from(i32::MAX),
+                    ..data
+                });
                 break;
             } else if data.transaction < transaction {
-                let mut taken = VelocityData { offset: f64::from(i32::MAX), ..data };
+                let mut taken = VelocityData {
+                    offset: f64::from(i32::MAX),
+                    ..data
+                };
                 if self.first_bread_only.is_some() {
                     taken.offset = data.offset;
                 }
@@ -85,7 +101,11 @@ impl KnockbackHandler {
     }
 
     /// `calculateRequiredKB`: the last velocity the client must have applied.
-    pub fn calculate_required(&mut self, transaction: u32, just_testing: bool) -> Option<VelocityData> {
+    pub fn calculate_required(
+        &mut self,
+        transaction: u32,
+        just_testing: bool,
+    ) -> Option<VelocityData> {
         self.tick(transaction);
         let last = self.last_known_taken.back().copied();
         if !just_testing {
@@ -118,7 +138,11 @@ impl KnockbackHandler {
         }
     }
 
-    pub fn should_ignore_for_prediction(p: &Movement, data: &VectorData, cfg: &VelocityConfig) -> bool {
+    pub fn should_ignore_for_prediction(
+        p: &Movement,
+        data: &VectorData,
+        cfg: &VelocityConfig,
+    ) -> bool {
         if data.is_knockback() && data.is_first_bread_kb() {
             return p.first_bread_kb.is_some_and(|k| k.offset > cfg.threshold);
         }
@@ -126,11 +150,19 @@ impl KnockbackHandler {
     }
 
     pub fn would_flag(p: &Movement, cfg: &VelocityConfig) -> bool {
-        p.likely_kb.is_some_and(|k| k.offset > cfg.threshold) || p.first_bread_kb.is_some_and(|k| k.offset > cfg.threshold)
+        p.likely_kb.is_some_and(|k| k.offset > cfg.threshold)
+            || p.first_bread_kb.is_some_and(|k| k.offset > cfg.threshold)
     }
 
     /// `KnockbackHandler.onPredictionComplete`.
-    pub fn on_prediction_complete(&mut self, p: &mut Movement, offset: f64, checked: bool, teleport: bool, cfg: &VelocityConfig) -> VelocityVerdict {
+    pub fn on_prediction_complete(
+        &mut self,
+        p: &mut Movement,
+        offset: f64,
+        checked: bool,
+        teleport: bool,
+        cfg: &VelocityConfig,
+    ) -> VelocityVerdict {
         if !checked || teleport {
             Self::force_exempt(p);
             return VelocityVerdict::None;
@@ -151,11 +183,21 @@ impl KnockbackHandler {
             if likely.offset > cfg.threshold {
                 self.threshold = (self.threshold + likely.offset).min(cfg.max_ceiling);
                 let ignored = likely.offset == f64::from(i32::MAX);
-                let wants_setback = likely.is_setback || likely.offset >= cfg.immediate_setback_threshold || self.threshold >= cfg.max_advantage;
+                let wants_setback = likely.is_setback
+                    || likely.offset >= cfg.immediate_setback_threshold
+                    || self.threshold >= cfg.max_advantage;
                 if likely.is_setback {
-                    return VelocityVerdict::Flag { offset: likely.offset, ignored, wants_setback: true };
+                    return VelocityVerdict::Flag {
+                        offset: likely.offset,
+                        ignored,
+                        wants_setback: true,
+                    };
                 }
-                return VelocityVerdict::Flag { offset: likely.offset, ignored, wants_setback };
+                return VelocityVerdict::Flag {
+                    offset: likely.offset,
+                    ignored,
+                    wants_setback,
+                };
             } else if self.threshold > 0.05 {
                 self.threshold *= cfg.setback_decay_multiplier;
             }
@@ -187,7 +229,8 @@ impl ExplosionHandler {
         if self.first_bread_map.len() >= KnockbackHandler::LIMIT {
             self.first_bread_map.pop_front();
         }
-        self.first_bread_map.push_back(VelocityData::new(vector, transaction));
+        self.first_bread_map
+            .push_back(VelocityData::new(vector, transaction));
     }
 
     fn handle_transaction(&mut self, transaction: u32) {
@@ -246,25 +289,40 @@ impl ExplosionHandler {
 
     pub fn should_ignore_for_prediction(p: &Movement, data: &VectorData, threshold: f64) -> bool {
         if data.is_explosion() && data.is_first_bread_explosion() {
-            return p.first_bread_explosion.is_some_and(|k| k.offset > threshold);
+            return p
+                .first_bread_explosion
+                .is_some_and(|k| k.offset > threshold);
         }
         false
     }
 
     pub fn would_flag(p: &Movement, threshold: f64) -> bool {
-        p.likely_explosion.is_some_and(|k| k.offset > threshold) || p.first_bread_explosion.is_some_and(|k| k.offset > threshold)
+        p.likely_explosion.is_some_and(|k| k.offset > threshold)
+            || p.first_bread_explosion
+                .is_some_and(|k| k.offset > threshold)
     }
 
     /// `ExplosionHandler.onPredictionComplete`.
-    pub fn on_prediction_complete(&mut self, p: &mut Movement, offset: f64, threshold: f64) -> VelocityVerdict {
+    pub fn on_prediction_complete(
+        &mut self,
+        p: &mut Movement,
+        offset: f64,
+        threshold: f64,
+    ) -> VelocityVerdict {
         let was_zero = self.point_three;
         self.point_three = false;
         if p.likely_explosion.is_none() && p.first_bread_explosion.is_none() {
             self.first_bread_added = None;
             return VelocityVerdict::None;
         }
-        let min_trans = p.likely_explosion.map_or(u32::MAX, |e| e.transaction).min(p.first_bread_explosion.map_or(u32::MAX, |e| e.transaction));
-        let kb_trans = p.likely_kb.map(|k| k.transaction).max(p.first_bread_kb.map(|k| k.transaction));
+        let min_trans = p
+            .likely_explosion
+            .map_or(u32::MAX, |e| e.transaction)
+            .min(p.first_bread_explosion.map_or(u32::MAX, |e| e.transaction));
+        let kb_trans = p
+            .likely_kb
+            .map(|k| k.transaction)
+            .max(p.first_bread_kb.map(|k| k.transaction));
         if p.predicted.is_first_bread_explosion() {
             self.first_bread_added = None;
             self.first_bread_map.pop_front();
@@ -276,7 +334,11 @@ impl ExplosionHandler {
             && !p.is_dead
         {
             if likely.offset > threshold {
-                return VelocityVerdict::Flag { offset, ignored: likely.offset == f64::from(i32::MAX), wants_setback: true };
+                return VelocityVerdict::Flag {
+                    offset,
+                    ignored: likely.offset == f64::from(i32::MAX),
+                    wants_setback: true,
+                };
             }
             return VelocityVerdict::Taken;
         }
@@ -312,7 +374,7 @@ mod tests {
     #[test]
     fn explosions_accumulate() {
         let mut h = ExplosionHandler::default();
-        h.add(Vec3::new(1.0, 0.0, 0.0), 3, );
+        h.add(Vec3::new(1.0, 0.0, 0.0), 3);
         h.add(Vec3::new(0.0, 1.0, 0.0), 3);
         let e = h.possible(4, false).unwrap();
         assert_eq!(e.vector, Vec3::new(1.0, 1.0, 0.0));

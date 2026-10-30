@@ -1,6 +1,6 @@
 // Grim-Horizon: a Rust port of Grim Anticheat (https://github.com/GrimAnticheat/Grim).
 // Copyright (C) GrimAC contributors (original Java), Grim-Horizon contributors (port).
-// Licensed under the GNU General Public License v3.0 only; see LICENSE.
+// Licensed under the GNU General Public License, version 3 or (at your option) any later version; see LICENSE.
 
 //! Ports of Grim's `Collisions`, `MainSupportingBlockPosFinder`,
 //! `BlockProperties` and `StuckSpeed` for 26.3 clients (1.21+ stepping,
@@ -77,7 +77,8 @@ fn collect_step_heights(bb: Aabb, boxes: &[Aabb], step_height: f32, collide_y: f
     for b in boxes {
         for possible in [b.min_y, b.max_y] {
             let y_diff = (possible - bb.min_y) as f32;
-            if !(y_diff < 0.0) && y_diff != collide_y {
+            // `!(yDiff < 0)`: NaN passes, as in Grim.
+            if y_diff.partial_cmp(&0.0) != Some(std::cmp::Ordering::Less) && y_diff != collide_y {
                 if y_diff > step_height {
                     break;
                 }
@@ -140,11 +141,29 @@ pub fn collide(
     let mut boxes = Vec::new();
     world.collision_boxes(grab, &mut boxes);
 
-    let theoretical_box = Aabb::new(0.0, desired_y.min(0.0), 0.0, desired_x, step_up.max(desired_y), desired_z).sorted();
-    let best_theoretical = cut_box_to_vector(p.actual_movement, theoretical_box.min(), theoretical_box.max());
-    let zero_count = usize::from(desired_x == 0.0) + usize::from(desired_y == 0.0) + usize::from(desired_z == 0.0);
+    let theoretical_box = Aabb::new(
+        0.0,
+        desired_y.min(0.0),
+        0.0,
+        desired_x,
+        step_up.max(desired_y),
+        desired_z,
+    )
+    .sorted();
+    let best_theoretical = cut_box_to_vector(
+        p.actual_movement,
+        theoretical_box.min(),
+        theoretical_box.max(),
+    );
+    let zero_count = usize::from(desired_x == 0.0)
+        + usize::from(desired_y == 0.0)
+        + usize::from(desired_z == 0.0);
 
-    let orders: &[[Axis; 3]] = if data.is_some_and(|d| d.is_zero_point_zero_three()) { &ALL_ORDERS } else { &NORMAL_ORDERS };
+    let orders: &[[Axis; 3]] = if data.is_some_and(|d| d.is_zero_point_zero_three()) {
+        &ALL_ORDERS
+    } else {
+        &NORMAL_ORDERS
+    };
     let desired = Vec3::new(desired_x, desired_y, desired_z);
     let mut best_input = f64::MAX;
     let mut best: Option<Vec3> = None;
@@ -153,7 +172,8 @@ pub fn collide(
     for order in orders {
         let mut result = collide_bounding_box(desired, bb, &boxes, order);
         // closeEnoughToGroundToStepWithPointThree is false for clients without 0.03.
-        let moving_into_ground_real = result.y != desired_y && (desired_y < 0.0 || client_vel_y < 0.0);
+        let moving_into_ground_real =
+            result.y != desired_y && (desired_y < 0.0 || client_vel_y < 0.0);
         let moving_into_ground = p.last_on_ground || moving_into_ground_real;
 
         if !disallow_stepping
@@ -163,16 +183,26 @@ pub fn collide(
         {
             p.uncertainty.is_step_movement = true;
             // The 1.21 stepping algorithm.
-            let starting = if moving_into_ground_real { bb.offset(0.0, result.y, 0.0) } else { bb };
+            let starting = if moving_into_ground_real {
+                bb.offset(0.0, result.y, 0.0)
+            } else {
+                bb
+            };
             let mut step_box = starting.expand_towards(desired_x, step_up, desired_z);
             if !moving_into_ground_real {
                 step_box = step_box.expand_towards(0.0, -f64::from(1.0e-5_f32), 0.0);
             }
             step_boxes.clear();
             world.collision_boxes(step_box, &mut step_boxes);
-            let heights = collect_step_heights(starting, &step_boxes, step_up as f32, result.y as f32);
+            let heights =
+                collect_step_heights(starting, &step_boxes, step_up as f32, result.y as f32);
             for h in heights {
-                let v = collide_bounding_box(Vec3::new(desired_x, f64::from(h), desired_z), starting, &step_boxes, order);
+                let v = collide_bounding_box(
+                    Vec3::new(desired_x, f64::from(h), desired_z),
+                    starting,
+                    &step_boxes,
+                    order,
+                );
                 if horizontal_distance_sqr(v) > horizontal_distance_sqr(result) {
                     let d = bb.min_y - starting.min_y;
                     result = v.add(Vec3::new(0.0, -d, 0.0));
@@ -200,7 +230,11 @@ pub fn collide(
 pub fn is_above_ground(p: &Movement, world: &dyn BlockView) -> bool {
     let step = p.max_up_step();
     p.last_on_ground
-        || (p.fall_distance < step && !is_empty(world, p.bounding_box.offset(0.0, p.fall_distance - step, 0.0)))
+        || (p.fall_distance < step
+            && !is_empty(
+                world,
+                p.bounding_box.offset(0.0, p.fall_distance - step, 0.0),
+            ))
 }
 
 /// `Collisions.maybeBackOffFromEdge`: sneaking players do not walk off edges.
@@ -228,7 +262,11 @@ pub fn maybe_back_off_from_edge(v: Vec3, p: &Movement, world: &dyn BlockView) ->
         step(&mut z);
         guard += 1;
     }
-    while x != 0.0 && z != 0.0 && is_empty(world, p.bounding_box.offset(x, max_step_down, z)) && guard < 1200 {
+    while x != 0.0
+        && z != 0.0
+        && is_empty(world, p.bounding_box.offset(x, max_step_down, z))
+        && guard < 1200
+    {
         step(&mut x);
         step(&mut z);
         guard += 1;
@@ -237,7 +275,13 @@ pub fn maybe_back_off_from_edge(v: Vec3, p: &Movement, world: &dyn BlockView) ->
 }
 
 /// `Collisions.slowCouldPointThreeHitGround`.
-pub fn slow_could_point_three_hit_ground(p: &mut Movement, world: &dyn BlockView, x: f64, y: f64, z: f64) -> bool {
+pub fn slow_could_point_three_hit_ground(
+    p: &mut Movement,
+    world: &dyn BlockView,
+    x: f64,
+    y: f64,
+    z: f64,
+) -> bool {
     let old = p.bounding_box;
     p.bounding_box = p.box_at(x, y, z, 0.6, 0.06);
     let t = crate::player::MOVEMENT_THRESHOLD;
@@ -282,7 +326,11 @@ pub fn suffocates_at(world: &dyn BlockView, bb: Aabb) -> bool {
 }
 
 /// Every non-air block position whose cell overlaps `bb` (`hasMaterial`).
-pub fn for_each_block(world: &dyn BlockView, bb: Aabb, mut f: impl FnMut(i32, i32, i32, BlockFacts)) {
+pub fn for_each_block(
+    world: &dyn BlockView,
+    bb: Aabb,
+    mut f: impl FnMut(i32, i32, i32, BlockFacts),
+) {
     let min_y = floor(bb.min_y).max(world.min_y());
     let max_y = floor(bb.max_y).min(world.max_y() - 1);
     for x in floor(bb.min_x)..=floor(bb.max_x) {
@@ -299,10 +347,21 @@ pub fn for_each_block(world: &dyn BlockView, bb: Aabb, mut f: impl FnMut(i32, i3
 
 /// `Collisions.forEachCollisionBox`: blocks with a collision box that
 /// intersects `bb`, by block position.
-pub fn for_each_colliding_block(world: &dyn BlockView, bb: Aabb, mut f: impl FnMut(i32, i32, i32, BlockFacts)) {
+pub fn for_each_colliding_block(
+    world: &dyn BlockView,
+    bb: Aabb,
+    mut f: impl FnMut(i32, i32, i32, BlockFacts),
+) {
     let mut boxes = Vec::new();
     // Fences and walls reach half a block above their cell.
-    let search = Aabb::new(bb.min_x, bb.min_y - 0.5, bb.min_z, bb.max_x, bb.max_y, bb.max_z);
+    let search = Aabb::new(
+        bb.min_x,
+        bb.min_y - 0.5,
+        bb.min_z,
+        bb.max_x,
+        bb.max_y,
+        bb.max_z,
+    );
     for_each_block(world, search, |x, y, z, b| {
         boxes.clear();
         world.block_collision_boxes(x, y, z, &mut boxes);
@@ -322,17 +381,36 @@ pub fn find_main_supporting_block(
     on_ground: bool,
 ) -> SupportingBlock {
     if !on_ground {
-        return SupportingBlock { pos: None, on_ground: false };
+        return SupportingBlock {
+            pos: None,
+            on_ground: false,
+        };
     }
-    let below = Aabb::new(bb.min_x, bb.min_y - 1.0e-6, bb.min_z, bb.max_x, bb.min_y, bb.max_z);
+    let below = Aabb::new(
+        bb.min_x,
+        bb.min_y - 1.0e-6,
+        bb.min_z,
+        bb.max_x,
+        bb.min_y,
+        bb.max_z,
+    );
     let found = find_supporting_block(p, world, below);
     if found.is_none() && !last.last_on_ground_and_no_block() {
         let moved = below.offset(-last_movement.x, 0.0, -last_movement.z);
-        return SupportingBlock { pos: find_supporting_block(p, world, moved), on_ground: true };
+        return SupportingBlock {
+            pos: find_supporting_block(p, world, moved),
+            on_ground: true,
+        };
     } else if found.is_some() {
-        return SupportingBlock { pos: found, on_ground: true };
+        return SupportingBlock {
+            pos: found,
+            on_ground: true,
+        };
     }
-    SupportingBlock { pos: None, on_ground: true }
+    SupportingBlock {
+        pos: None,
+        on_ground: true,
+    }
 }
 
 fn find_supporting_block(p: &Movement, world: &dyn BlockView, search: Aabb) -> Option<[i32; 3]> {
@@ -342,7 +420,9 @@ fn find_supporting_block(p: &Movement, world: &dyn BlockView, search: Aabb) -> O
     for_each_colliding_block(world, search, |x, y, z, _| {
         let center = Vec3::new(f64::from(x) + 0.5, f64::from(y) + 0.5, f64::from(z) + 0.5);
         let d = pos.distance_squared(center);
-        if d < best_distance || (d == best_distance && best.is_none_or(|b| first_has_priority(x, y, z, b))) {
+        if d < best_distance
+            || (d == best_distance && best.is_none_or(|b| first_has_priority(x, y, z, b)))
+        {
             best = Some([x, y, z]);
             best_distance = d;
         }
@@ -364,26 +444,48 @@ fn first_has_priority(x: i32, y: i32, z: i32, second: [i32; 3]) -> bool {
 }
 
 /// `BlockProperties.getOnPos`.
-fn on_pos(p: &Movement, world: &dyn BlockView, pos: Vec3, support: SupportingBlock, below: f32) -> [i32; 3] {
+fn on_pos(
+    p: &Movement,
+    world: &dyn BlockView,
+    pos: Vec3,
+    support: SupportingBlock,
+    below: f32,
+) -> [i32; 3] {
     if let Some(main) = support.pos {
+        // Grim keeps fences' own position for searches up to 0.5 below, and
+        // walls' and gates' always; one kind covers all three here.
         let kind = world.block(main[0], main[1], main[2]).kind;
-        let should_return = (!(f64::from(below) <= 0.5) || kind != BlockKind::FenceLike) && kind != BlockKind::FenceLike;
-        let _ = p;
-        if should_return { [main[0], floor(pos.y - f64::from(below)), main[2]] } else { main }
+        let should_return = kind != BlockKind::FenceLike;
+        let _ = (p, below);
+        if should_return {
+            [main[0], floor(pos.y - f64::from(below)), main[2]]
+        } else {
+            main
+        }
     } else {
         [floor(pos.x), floor(pos.y - f64::from(below)), floor(pos.z)]
     }
 }
 
 /// `getBlockPosBelowThatAffectsMyMovement`.
-pub fn block_below_affecting_movement(p: &Movement, world: &dyn BlockView, support: SupportingBlock, pos: Vec3) -> BlockFacts {
+pub fn block_below_affecting_movement(
+    p: &Movement,
+    world: &dyn BlockView,
+    support: SupportingBlock,
+    pos: Vec3,
+) -> BlockFacts {
     let b = on_pos(p, world, pos, support, 0.500001);
     world.block(b[0], b[1], b[2])
 }
 
 /// `BlockProperties.getOnPos(player, data, pos)` with 0.2 below: the block
 /// landing bounces on.
-pub fn on_block(p: &Movement, world: &dyn BlockView, support: SupportingBlock, pos: Vec3) -> BlockFacts {
+pub fn on_block(
+    p: &Movement,
+    world: &dyn BlockView,
+    support: SupportingBlock,
+    pos: Vec3,
+) -> BlockFacts {
     let b = on_pos(p, world, pos, support, 0.2);
     world.block(b[0], b[1], b[2])
 }
@@ -420,13 +522,21 @@ pub fn friction_influenced_speed(block_friction: f32, p: &Movement) -> f32 {
 }
 
 /// `BlockProperties.getBlockSpeedFactor` for 1.21+ clients.
-pub fn block_speed_factor(p: &Movement, world: &dyn BlockView, support: SupportingBlock, pos: Vec3) -> f32 {
+pub fn block_speed_factor(
+    p: &Movement,
+    world: &dyn BlockView,
+    support: SupportingBlock,
+    pos: Vec3,
+) -> f32 {
     if p.is_gliding || p.is_flying {
         return 1.0;
     }
     let inside = world.block(floor(pos.x), floor(pos.y), floor(pos.z));
     let efficiency = p.attr(Attr::MovementEfficiency) as f32;
-    if inside.speed_factor != 1.0 || inside.kind == BlockKind::Water || inside.kind == BlockKind::BubbleColumn {
+    if inside.speed_factor != 1.0
+        || inside.kind == BlockKind::Water
+        || inside.kind == BlockKind::BubbleColumn
+    {
         return lerp_f32(efficiency, inside.speed_factor, 1.0);
     }
     let under = block_below_affecting_movement(p, world, support, pos);
@@ -434,7 +544,12 @@ pub fn block_speed_factor(p: &Movement, world: &dyn BlockView, support: Supporti
 }
 
 /// `BlockProperties.onHoneyBlock`.
-pub fn on_honey_block(p: &Movement, world: &dyn BlockView, support: SupportingBlock, pos: Vec3) -> bool {
+pub fn on_honey_block(
+    p: &Movement,
+    world: &dyn BlockView,
+    support: SupportingBlock,
+    pos: Vec3,
+) -> bool {
     world.block(floor(pos.x), floor(pos.y), floor(pos.z)).kind == BlockKind::HoneyBlock
         || block_below_affecting_movement(p, world, support, pos).kind == BlockKind::HoneyBlock
 }
@@ -462,7 +577,12 @@ pub fn effective_gravity(p: &Movement, delta_y: f64) -> f64 {
 }
 
 /// `BlockProperties.getVelocityAfterVerticalCollision` (26.3).
-pub fn velocity_after_vertical_collision(p: &Movement, velocity: f64, movement_y: f64, restitution: f64) -> f64 {
+pub fn velocity_after_vertical_collision(
+    p: &Movement,
+    velocity: f64,
+    movement_y: f64,
+    restitution: f64,
+) -> f64 {
     let gravity = effective_gravity(p, velocity);
     let correct_gravity = -velocity <= gravity;
     if velocity < 0.0 && correct_gravity {
@@ -471,7 +591,11 @@ pub fn velocity_after_vertical_collision(p: &Movement, velocity: f64, movement_y
     if restitution <= 0.0 {
         return 0.0;
     }
-    let portion = if velocity == 0.0 { 0.0 } else { movement_y / velocity };
+    let portion = if velocity == 0.0 {
+        0.0
+    } else {
+        movement_y / velocity
+    };
     let gravity_compensation = portion * gravity;
     let effective_drag = crate::math::lerp(portion, 1.0, f64::from(modified_air_drag(0.98, p)));
     (gravity_compensation - velocity) * effective_drag * restitution
@@ -482,7 +606,14 @@ pub fn velocity_after_vertical_collision(p: &Movement, velocity: f64, movement_y
 /// 8 powder snow).
 pub fn check_stuck_speed(p: &Movement, world: &dyn BlockView, expand: f64) -> u32 {
     let bb = p.pose_box_at(p.x, p.y, p.z).inflate(expand);
-    let (x0, y0, z0, x1, y1, z1) = (floor(bb.min_x), floor(bb.min_y), floor(bb.min_z), floor(bb.max_x), floor(bb.max_y), floor(bb.max_z));
+    let (x0, y0, z0, x1, y1, z1) = (
+        floor(bb.min_x),
+        floor(bb.min_y),
+        floor(bb.min_z),
+        floor(bb.max_x),
+        floor(bb.max_y),
+        floor(bb.max_z),
+    );
     if !world.are_chunks_loaded(x0, z0, x1, z1) {
         return 0;
     }
@@ -493,7 +624,11 @@ pub fn check_stuck_speed(p: &Movement, world: &dyn BlockView, expand: f64) -> u3
                 match world.block(x, y, z).kind {
                     BlockKind::Cobweb => mask |= 1,
                     BlockKind::SweetBerryBush => mask |= 4,
-                    BlockKind::PowderSnow if x == floor(p.x) && y == floor(p.y) && z == floor(p.z) => mask |= 8,
+                    BlockKind::PowderSnow
+                        if x == floor(p.x) && y == floor(p.y) && z == floor(p.z) =>
+                    {
+                        mask |= 8
+                    }
                     _ => {}
                 }
             }
@@ -540,7 +675,13 @@ mod tests {
         let mut w = TestWorld::new();
         w.floor(-3, 6, 63, -3, 3, BlockFacts::SOLID);
         // A half slab at x = 1.
-        w.set_shape(1, 64, 0, BlockFacts::SOLID, &[Aabb::new(0.0, 0.0, 0.0, 1.0, 0.5, 1.0)]);
+        w.set_shape(
+            1,
+            64,
+            0,
+            BlockFacts::SOLID,
+            &[Aabb::new(0.0, 0.0, 0.0, 1.0, 0.5, 1.0)],
+        );
         let mut p = player_at(0.5, 64.0, 0.5);
         p.last_on_ground = true;
         p.on_ground = true;
@@ -565,10 +706,17 @@ mod tests {
     #[test]
     fn ice_speed_factor_and_friction() {
         let mut w = TestWorld::new();
-        let ice = BlockFacts { friction: 0.98, kind: BlockKind::Ice, ..BlockFacts::SOLID };
+        let ice = BlockFacts {
+            friction: 0.98,
+            kind: BlockKind::Ice,
+            ..BlockFacts::SOLID
+        };
         w.floor(-2, 2, 63, -2, 2, ice);
         let p = player_at(0.5, 64.0, 0.5);
-        let support = SupportingBlock { pos: Some([0, 63, 0]), on_ground: true };
+        let support = SupportingBlock {
+            pos: Some([0, 63, 0]),
+            on_ground: true,
+        };
         assert_eq!(friction(&p, &w, support, p.position()), 0.98);
     }
 }

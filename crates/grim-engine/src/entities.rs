@@ -1,6 +1,6 @@
 // Grim-Horizon: a Rust port of Grim Anticheat (https://github.com/GrimAnticheat/Grim).
 // Copyright (C) GrimAC contributors (original Java), Grim-Horizon contributors (port).
-// Licensed under the GNU General Public License v3.0 only; see LICENSE.
+// Licensed under the GNU General Public License, version 3 or (at your option) any later version; see LICENSE.
 
 //! Entity positions for Reach and Hitboxes.
 //!
@@ -42,8 +42,9 @@ pub fn builtin_size(kind: &str) -> Option<(f32, f32)> {
     let kind = kind.strip_prefix("minecraft:").unwrap_or(kind);
     Some(match kind {
         "player" => (0.6, 1.8),
-        "zombie" | "husk" | "drowned" | "zombie_villager" | "villager" | "witch" | "pillager" | "vindicator" | "evoker"
-        | "illusioner" | "wandering_trader" | "piglin" | "piglin_brute" | "zombified_piglin" => (0.6, 1.95),
+        "zombie" | "husk" | "drowned" | "zombie_villager" | "villager" | "witch" | "pillager"
+        | "vindicator" | "evoker" | "illusioner" | "wandering_trader" | "piglin"
+        | "piglin_brute" | "zombified_piglin" => (0.6, 1.95),
         "skeleton" | "stray" | "bogged" => (0.6, 1.99),
         "wither_skeleton" => (0.7, 2.4),
         "creeper" => (0.6, 1.7),
@@ -121,7 +122,8 @@ impl EntityHistory {
         if self.ticks.len() >= HISTORY_TICKS {
             self.ticks.pop_front();
         }
-        self.ticks.push_back((tick, entities.into_iter().map(|e| (e.id, e)).collect()));
+        self.ticks
+            .push_back((tick, entities.into_iter().map(|e| (e.id, e)).collect()));
     }
 
     pub fn latest(&self, id: i32) -> Option<&EntitySnapshot> {
@@ -142,7 +144,11 @@ impl EntityHistory {
                 out = Some(match out {
                     None => (b, *e),
                     Some((u, first)) => {
-                        let merged = EntitySnapshot { checkable: first.checkable && e.checkable, riding: first.riding || e.riding, ..first };
+                        let merged = EntitySnapshot {
+                            checkable: first.checkable && e.checkable,
+                            riding: first.riding || e.riding,
+                            ..first
+                        };
                         (u.union(b), merged)
                     }
                 });
@@ -162,7 +168,14 @@ mod tests {
     use super::*;
 
     fn zombie(id: i32, x: f64) -> EntitySnapshot {
-        EntitySnapshot { id, pos: Vec3::new(x, 64.0, 0.0), width: 0.6, height: 1.95, checkable: true, riding: false }
+        EntitySnapshot {
+            id,
+            pos: Vec3::new(x, 64.0, 0.0),
+            width: 0.6,
+            height: 1.95,
+            checkable: true,
+            riding: false,
+        }
     }
 
     #[test]

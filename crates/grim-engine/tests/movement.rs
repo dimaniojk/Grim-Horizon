@@ -29,12 +29,21 @@ fn reference_client_matches_published_vanilla_numbers() {
 
     let mut h = Harness::new(flat_world(stone()), SPAWN);
     for _ in 0..40 {
-        h.tick(Keys { sprint: true, ..Keys::forward() });
+        h.tick(Keys {
+            sprint: true,
+            ..Keys::forward()
+        });
     }
     let before = h.client.pos.z;
-    h.tick(Keys { sprint: true, ..Keys::forward() });
+    h.tick(Keys {
+        sprint: true,
+        ..Keys::forward()
+    });
     let sprinted = h.client.pos.z - before;
-    assert!((sprinted - 0.280617).abs() < 1e-4, "sprint speed {sprinted}");
+    assert!(
+        (sprinted - 0.280617).abs() < 1e-4,
+        "sprint speed {sprinted}"
+    );
 }
 
 #[test]
@@ -58,17 +67,34 @@ fn walking_is_predicted_exactly() {
     assert_clean(&h);
     assert!(worst < 1e-6, "worst offset {worst}");
     let (predictions, skipped) = h.checked_predictions();
-    assert!(predictions > 150 && skipped == 0, "{predictions} predictions, {skipped} skipped");
+    assert!(
+        predictions > 150 && skipped == 0,
+        "{predictions} predictions, {skipped} skipped"
+    );
 }
 
 #[test]
 fn diagonal_and_strafing_inputs() {
     let mut h = Harness::new(flat_world(stone()), SPAWN);
     let patterns = [
-        Keys { forward: true, left: true, ..Default::default() },
-        Keys { backward: true, right: true, ..Default::default() },
-        Keys { left: true, ..Default::default() },
-        Keys { backward: true, ..Default::default() },
+        Keys {
+            forward: true,
+            left: true,
+            ..Default::default()
+        },
+        Keys {
+            backward: true,
+            right: true,
+            ..Default::default()
+        },
+        Keys {
+            left: true,
+            ..Default::default()
+        },
+        Keys {
+            backward: true,
+            ..Default::default()
+        },
     ];
     for i in 0..160 {
         h.tick(patterns[(i / 40) % 4]);
@@ -80,7 +106,10 @@ fn diagonal_and_strafing_inputs() {
 fn sprinting_is_clean() {
     let mut h = Harness::new(flat_world(stone()), SPAWN);
     for _ in 0..100 {
-        h.tick(Keys { sprint: true, ..Keys::forward() });
+        h.tick(Keys {
+            sprint: true,
+            ..Keys::forward()
+        });
     }
     assert_clean(&h);
 }
@@ -92,11 +121,21 @@ fn jumping_matches_vanilla_and_is_clean() {
         h.tick(Keys::default());
     }
     let y0 = h.client.pos.y;
-    h.tick(Keys { jump: true, ..Default::default() });
-    assert!((h.client.pos.y - y0 - 0.42).abs() < 1e-6, "first jump tick {}", h.client.pos.y - y0);
+    h.tick(Keys {
+        jump: true,
+        ..Default::default()
+    });
+    assert!(
+        (h.client.pos.y - y0 - 0.42).abs() < 1e-6,
+        "first jump tick {}",
+        h.client.pos.y - y0
+    );
     let mut peak = 0.0_f64;
     for _ in 0..40 {
-        h.tick(Keys { jump: true, ..Default::default() });
+        h.tick(Keys {
+            jump: true,
+            ..Default::default()
+        });
         peak = peak.max(h.client.pos.y - y0);
     }
     assert!((peak - 1.2522).abs() < 1e-3, "jump height {peak}");
@@ -108,7 +147,11 @@ fn sprint_jumping_is_clean() {
     let mut h = Harness::new(flat_world(stone()), SPAWN);
     for i in 0..120 {
         h.client.yaw = (i as f32 * 1.5).sin() * 40.0;
-        h.tick(Keys { sprint: true, jump: true, ..Keys::forward() });
+        h.tick(Keys {
+            sprint: true,
+            jump: true,
+            ..Keys::forward()
+        });
     }
     assert_clean(&h);
 }
@@ -123,7 +166,12 @@ fn falling_is_clean_and_follows_vanilla_velocities() {
         ys.push(h.client.pos.y - y);
     }
     // Movement each tick: 0, -0.0784, -0.155232, -0.23052736.
-    assert!(ys[1] + 0.0784 < 1e-6 && (ys[2] + 0.155232).abs() < 1e-6 && (ys[3] + 0.23052736).abs() < 1e-6, "{ys:?}");
+    assert!(
+        ys[1] + 0.0784 < 1e-6
+            && (ys[2] + 0.155232).abs() < 1e-6
+            && (ys[3] + 0.23052736).abs() < 1e-6,
+        "{ys:?}"
+    );
     for _ in 0..60 {
         h.tick(Keys::default());
     }
@@ -137,7 +185,10 @@ fn sneaking_at_an_edge_is_clean() {
     w.floor(-4, 4, 63, -4, 0, stone());
     let mut h = Harness::new(w, Vec3::new(0.5, 64.0, -2.5));
     for _ in 0..80 {
-        h.tick(Keys { sneak: true, ..Keys::forward() });
+        h.tick(Keys {
+            sneak: true,
+            ..Keys::forward()
+        });
     }
     // The player stopped at the edge.
     assert!(h.client.pos.z < 1.35, "fell off: {}", h.client.pos.z);
@@ -146,10 +197,21 @@ fn sneaking_at_an_edge_is_clean() {
 
 #[test]
 fn ice_is_clean() {
-    let ice = BlockFacts { friction: 0.98, kind: BlockKind::Ice, ..stone() };
+    let ice = BlockFacts {
+        friction: 0.98,
+        kind: BlockKind::Ice,
+        ..stone()
+    };
     let mut h = Harness::new(flat_world(ice), SPAWN);
     for i in 0..120 {
-        let keys = if i < 60 { Keys { sprint: true, ..Keys::forward() } } else { Keys::default() };
+        let keys = if i < 60 {
+            Keys {
+                sprint: true,
+                ..Keys::forward()
+            }
+        } else {
+            Keys::default()
+        };
         h.tick(keys);
     }
     assert_clean(&h);
@@ -157,7 +219,11 @@ fn ice_is_clean() {
 
 #[test]
 fn soul_sand_is_clean() {
-    let sand = BlockFacts { speed_factor: 0.4, kind: BlockKind::SoulSand, ..stone() };
+    let sand = BlockFacts {
+        speed_factor: 0.4,
+        kind: BlockKind::SoulSand,
+        ..stone()
+    };
     let mut h = Harness::new(flat_world(sand), SPAWN);
     for _ in 0..80 {
         h.tick(Keys::forward());
@@ -174,8 +240,14 @@ fn still_water_is_clean() {
         let keys = match i / 30 {
             0 => Keys::default(),
             1 => Keys::forward(),
-            2 => Keys { jump: true, ..Keys::forward() },
-            _ => Keys { left: true, ..Default::default() },
+            2 => Keys {
+                jump: true,
+                ..Keys::forward()
+            },
+            _ => Keys {
+                left: true,
+                ..Default::default()
+            },
         };
         h.tick(keys);
     }
@@ -184,7 +256,12 @@ fn still_water_is_clean() {
 
 #[test]
 fn slime_bounce_is_clean() {
-    let slime = BlockFacts { friction: 0.8, bounce: 1.0, kind: BlockKind::SlimeBlock, ..stone() };
+    let slime = BlockFacts {
+        friction: 0.8,
+        bounce: 1.0,
+        kind: BlockKind::SlimeBlock,
+        ..stone()
+    };
     let mut h = Harness::new(flat_world(slime), Vec3::new(0.5, 70.0, 0.5));
     for _ in 0..80 {
         h.tick(Keys::default());
@@ -197,7 +274,13 @@ fn stepping_up_a_slab_is_clean() {
     use grim_horizon_engine::math::Aabb;
     let mut w = flat_world(stone());
     for x in -4..=4 {
-        w.set_shape(x, 64, 3, stone(), &[Aabb::new(0.0, 0.0, 0.0, 1.0, 0.5, 1.0)]);
+        w.set_shape(
+            x,
+            64,
+            3,
+            stone(),
+            &[Aabb::new(0.0, 0.0, 0.0, 1.0, 0.5, 1.0)],
+        );
         for z in 4..10 {
             w.set_full(x, 64, z, stone());
         }
@@ -221,7 +304,10 @@ fn walking_into_a_wall_is_clean() {
     let mut h = Harness::new(w, SPAWN);
     for i in 0..80 {
         h.client.yaw = if i < 40 { 0.0 } else { 30.0 };
-        h.tick(Keys { sprint: true, ..Keys::forward() });
+        h.tick(Keys {
+            sprint: true,
+            ..Keys::forward()
+        });
     }
     assert_clean(&h);
 }
@@ -352,7 +438,10 @@ fn packet_bursts_after_lag_are_clean() {
 fn teleports_reset_prediction() {
     let mut h = Harness::new(flat_world(stone()), SPAWN);
     for _ in 0..20 {
-        h.tick(Keys { sprint: true, ..Keys::forward() });
+        h.tick(Keys {
+            sprint: true,
+            ..Keys::forward()
+        });
     }
     h.teleport(Vec3::new(20.5, 64.0, 20.5));
     for _ in 0..20 {
@@ -368,17 +457,29 @@ fn alert_only_mode_never_sets_back_or_modifies() {
         h.client_tick(Keys::forward(), |c| c.pos.z += 0.3);
     }
     assert!(h.flagged(CheckId::Simulation) > 0);
-    assert!(!h.actions.iter().any(|a| matches!(a, grim_horizon_engine::Action::Setback { .. } | grim_horizon_engine::Action::Kick { .. })));
-    assert!(h.verdicts.iter().all(|v| *v == grim_horizon_engine::Verdict::Keep));
+    assert!(!h.actions.iter().any(|a| matches!(
+        a,
+        grim_horizon_engine::Action::Setback { .. } | grim_horizon_engine::Action::Kick { .. }
+    )));
+    assert!(
+        h.verdicts
+            .iter()
+            .all(|v| *v == grim_horizon_engine::Verdict::Keep)
+    );
 }
 
 #[test]
 fn setback_mode_sets_back_speed() {
-    let mut h = Harness::new(flat_world(stone()), SPAWN).with_config(|c| c.mode = grim_horizon_engine::config::Mode::Setback);
+    let mut h = Harness::new(flat_world(stone()), SPAWN)
+        .with_config(|c| c.mode = grim_horizon_engine::config::Mode::Setback);
     for _ in 0..40 {
         h.client_tick(Keys::forward(), |c| c.pos.z += 0.3);
     }
-    let setbacks = h.actions.iter().filter(|a| matches!(a, grim_horizon_engine::Action::Setback { key: KEY, .. })).count();
+    let setbacks = h
+        .actions
+        .iter()
+        .filter(|a| matches!(a, grim_horizon_engine::Action::Setback { key: KEY, .. }))
+        .count();
     assert!(setbacks >= 1, "actions: {:?}", h.actions);
 }
 
@@ -403,7 +504,10 @@ fn block_changes_near_the_player_wait_for_transactions() {
     }
     // The server removed the floor under the player; until the client
     // answers the next transaction it may still stand on it.
-    h.engine.on_outgoing(KEY, grim_horizon_engine::Clientbound::BlockChanged([0, 63, 0]));
+    h.engine.on_outgoing(
+        KEY,
+        grim_horizon_engine::Clientbound::BlockChanged([0, 63, 0]),
+    );
     h.world.remove(0, 63, 0);
     h.tick(Keys::default());
     assert_clean(&h);

@@ -1,6 +1,6 @@
 // Grim-Horizon: a Rust port of Grim Anticheat (https://github.com/GrimAnticheat/Grim).
 // Copyright (C) GrimAC contributors (original Java), Grim-Horizon contributors (port).
-// Licensed under the GNU General Public License v3.0 only; see LICENSE.
+// Licensed under the GNU General Public License, version 3 or (at your option) any later version; see LICENSE.
 
 //! The engine's view of the world. Grim keeps its own client-side copy of
 //! every chunk (`CompensatedWorld`); this port reads the server's
@@ -146,11 +146,19 @@ impl dyn BlockView + '_ {
     }
     pub fn water_height(&self, x: i32, y: i32, z: i32) -> f32 {
         let f = self.fluid(x, y, z);
-        if f.kind == FluidKind::Water { f.height } else { 0.0 }
+        if f.kind == FluidKind::Water {
+            f.height
+        } else {
+            0.0
+        }
     }
     pub fn lava_height(&self, x: i32, y: i32, z: i32) -> f32 {
         let f = self.fluid(x, y, z);
-        if f.kind == FluidKind::Lava { f.height } else { 0.0 }
+        if f.kind == FluidKind::Lava {
+            f.height
+        } else {
+            0.0
+        }
     }
     pub fn fluid_height(&self, x: i32, y: i32, z: i32) -> f32 {
         self.fluid(x, y, z).height
@@ -202,8 +210,16 @@ impl PendingBlocks {
         if self.entries.is_empty() {
             return false;
         }
-        let (x0, y0, z0) = (floor(area.min_x) - 1, floor(area.min_y) - 1, floor(area.min_z) - 1);
-        let (x1, y1, z1) = (floor(area.max_x) + 1, floor(area.max_y) + 1, floor(area.max_z) + 1);
+        let (x0, y0, z0) = (
+            floor(area.min_x) - 1,
+            floor(area.min_y) - 1,
+            floor(area.min_z) - 1,
+        );
+        let (x1, y1, z1) = (
+            floor(area.max_x) + 1,
+            floor(area.max_y) + 1,
+            floor(area.max_z) + 1,
+        );
         self.entries.iter().any(|(p, _)| {
             (x0..=x1).contains(&p[0]) && (y0..=y1).contains(&p[1]) && (z0..=z1).contains(&p[2])
         })
@@ -224,15 +240,29 @@ pub struct TestWorld {
 
 impl TestWorld {
     pub fn new() -> Self {
-        Self { min_y: -64, max_y: 320, ..Default::default() }
+        Self {
+            min_y: -64,
+            max_y: 320,
+            ..Default::default()
+        }
     }
     /// A full cube of `facts` at a position.
     pub fn set_full(&mut self, x: i32, y: i32, z: i32, facts: BlockFacts) {
-        let b = Aabb::new(f64::from(x), f64::from(y), f64::from(z), f64::from(x + 1), f64::from(y + 1), f64::from(z + 1));
+        let b = Aabb::new(
+            f64::from(x),
+            f64::from(y),
+            f64::from(z),
+            f64::from(x + 1),
+            f64::from(y + 1),
+            f64::from(z + 1),
+        );
         self.blocks.insert([x, y, z], (facts, vec![b]));
     }
     pub fn set_shape(&mut self, x: i32, y: i32, z: i32, facts: BlockFacts, local: &[Aabb]) {
-        let boxes = local.iter().map(|b| b.offset(f64::from(x), f64::from(y), f64::from(z))).collect();
+        let boxes = local
+            .iter()
+            .map(|b| b.offset(f64::from(x), f64::from(y), f64::from(z)))
+            .collect();
         self.blocks.insert([x, y, z], (facts, boxes));
     }
     /// A block with facts but no collision (water, vines...).
@@ -259,10 +289,26 @@ impl TestWorld {
         for x in x0..=x1 {
             for y in y0..=y1 {
                 for z in z0..=z1 {
-                    let facts = BlockFacts { kind: BlockKind::Water, air: false, suffocates: false, ..BlockFacts::AIR };
+                    let facts = BlockFacts {
+                        kind: BlockKind::Water,
+                        air: false,
+                        suffocates: false,
+                        ..BlockFacts::AIR
+                    };
                     self.set_passable(x, y, z, facts);
                     let height = if y < y1 { 1.0 } else { 8.0 / 9.0 };
-                    self.set_fluid(x, y, z, FluidFacts { kind: FluidKind::Water, amount: 8, source: true, falling: false, height });
+                    self.set_fluid(
+                        x,
+                        y,
+                        z,
+                        FluidFacts {
+                            kind: FluidKind::Water,
+                            amount: 8,
+                            source: true,
+                            falling: false,
+                            height,
+                        },
+                    );
                 }
             }
         }
@@ -291,12 +337,23 @@ impl BlockView for TestWorld {
         self.fluids.get(&[x, y, z]).copied().unwrap_or_default()
     }
     fn collision_boxes(&self, query: Aabb, out: &mut Vec<Aabb>) {
-        let (x0, y0, z0) = (floor(query.min_x) - 1, floor(query.min_y) - 1, floor(query.min_z) - 1);
-        let (x1, y1, z1) = (floor(query.max_x) + 1, floor(query.max_y) + 1, floor(query.max_z) + 1);
+        let (x0, y0, z0) = (
+            floor(query.min_x) - 1,
+            floor(query.min_y) - 1,
+            floor(query.min_z) - 1,
+        );
+        let (x1, y1, z1) = (
+            floor(query.max_x) + 1,
+            floor(query.max_y) + 1,
+            floor(query.max_z) + 1,
+        );
         let volume = i64::from(x1 - x0 + 1) * i64::from(y1 - y0 + 1) * i64::from(z1 - z0 + 1);
         if volume as usize > self.blocks.len() {
             for (p, (_, boxes)) in &self.blocks {
-                if (x0..=x1).contains(&p[0]) && (y0..=y1).contains(&p[1]) && (z0..=z1).contains(&p[2]) {
+                if (x0..=x1).contains(&p[0])
+                    && (y0..=y1).contains(&p[1])
+                    && (z0..=z1).contains(&p[2])
+                {
                     out.extend(boxes.iter().copied());
                 }
             }

@@ -11,7 +11,14 @@ use grim_horizon_engine::{CheckId, Clientbound};
 const SPAWN: Vec3 = Vec3::new(0.5, 64.0, 0.5);
 
 fn zombie_at(x: f64, z: f64) -> EntitySnapshot {
-    EntitySnapshot { id: 500, pos: Vec3::new(x, 64.0, z), width: 0.6, height: 1.95, checkable: true, riding: false }
+    EntitySnapshot {
+        id: 500,
+        pos: Vec3::new(x, 64.0, z),
+        width: 0.6,
+        height: 1.95,
+        checkable: true,
+        riding: false,
+    }
 }
 
 /// Settles the player, keeping a zombie recorded every tick.
@@ -25,7 +32,10 @@ fn settle(h: &mut Harness, zombie: EntitySnapshot) {
 fn attack(h: &mut Harness, zombie: EntitySnapshot) {
     h.engine.record_entities("minecraft:overworld", [zombie]);
     // 1.9+ order: attack, then the swing, then the movement of the tick.
-    h.send(vec![Serverbound::Attack { entity: 500 }, Serverbound::Swing { main_hand: true }]);
+    h.send(vec![
+        Serverbound::Attack { entity: 500 },
+        Serverbound::Swing { main_hand: true },
+    ]);
     h.tick(Keys::default());
     h.engine.record_entities("minecraft:overworld", [zombie]);
     h.tick(Keys::default());
@@ -68,7 +78,10 @@ fn moving_target_under_latency_is_clean() {
     h.latency_ticks = 6;
     // The zombie walks away; the client still sees it where it was 6 ticks ago.
     for t in 0..30 {
-        h.engine.record_entities("minecraft:overworld", [zombie_at(0.5, 2.5 + f64::from(t) * 0.1)]);
+        h.engine.record_entities(
+            "minecraft:overworld",
+            [zombie_at(0.5, 2.5 + f64::from(t) * 0.1)],
+        );
         h.tick(Keys::default());
     }
     // Even the oldest position the client may still be showing is out of
@@ -81,11 +94,19 @@ fn moving_target_under_latency_is_clean() {
     let mut h = Harness::new(flat_world(stone()), SPAWN);
     h.latency_ticks = 6;
     for t in 0..30 {
-        let z = if t < 25 { 2.6 } else { 2.6 + f64::from(t - 24) * 0.5 };
-        h.engine.record_entities("minecraft:overworld", [zombie_at(0.5, z)]);
+        let z = if t < 25 {
+            2.6
+        } else {
+            2.6 + f64::from(t - 24) * 0.5
+        };
+        h.engine
+            .record_entities("minecraft:overworld", [zombie_at(0.5, z)]);
         h.tick(Keys::default());
     }
-    h.send(vec![Serverbound::Attack { entity: 500 }, Serverbound::Swing { main_hand: true }]);
+    h.send(vec![
+        Serverbound::Attack { entity: 500 },
+        Serverbound::Swing { main_hand: true },
+    ]);
     h.tick(Keys::default());
     assert_eq!(h.flagged(CheckId::Reach), 0, "{:?}", h.flags);
 }
@@ -111,7 +132,11 @@ fn attack_without_swing_flags_packet_order() {
 #[test]
 fn slot_checks() {
     let mut h = Harness::new(flat_world(stone()), SPAWN);
-    h.send(vec![Serverbound::HeldSlot { slot: 3 }, Serverbound::HeldSlot { slot: 3 }, Serverbound::HeldSlot { slot: 12 }]);
+    h.send(vec![
+        Serverbound::HeldSlot { slot: 3 },
+        Serverbound::HeldSlot { slot: 3 },
+        Serverbound::HeldSlot { slot: 12 },
+    ]);
     assert_eq!(h.flagged(CheckId::BadPacketsA), 1);
     assert_eq!(h.flagged(CheckId::BadPacketsY), 1);
 }
@@ -120,9 +145,19 @@ fn slot_checks() {
 fn invalid_pitch_and_nan_flag() {
     let mut h = Harness::new(flat_world(stone()), SPAWN);
     h.send(vec![
-        Serverbound::Move { pos: None, rot: Some((0.0, 95.0)), on_ground: true, horizontal_collision: false },
+        Serverbound::Move {
+            pos: None,
+            rot: Some((0.0, 95.0)),
+            on_ground: true,
+            horizontal_collision: false,
+        },
         Serverbound::TickEnd,
-        Serverbound::Move { pos: Some(Vec3::new(f64::NAN, 64.0, 0.5)), rot: None, on_ground: true, horizontal_collision: false },
+        Serverbound::Move {
+            pos: Some(Vec3::new(f64::NAN, 64.0, 0.5)),
+            rot: None,
+            on_ground: true,
+            horizontal_collision: false,
+        },
         Serverbound::TickEnd,
     ]);
     assert_eq!(h.flagged(CheckId::BadPacketsD), 1);
@@ -135,7 +170,14 @@ fn flying_without_permission_flags() {
     h.send(vec![Serverbound::Abilities { flying: true }]);
     assert_eq!(h.flagged(CheckId::BadPacketsI), 1);
     // A creative player may fly.
-    h.engine.on_outgoing(KEY, Clientbound::Abilities { flying: false, may_fly: true, fly_speed: 0.05 });
+    h.engine.on_outgoing(
+        KEY,
+        Clientbound::Abilities {
+            flying: false,
+            may_fly: true,
+            fly_speed: 0.05,
+        },
+    );
     h.send(vec![Serverbound::Abilities { flying: true }]);
     assert_eq!(h.flagged(CheckId::BadPacketsI), 1);
 }
@@ -144,8 +186,14 @@ fn flying_without_permission_flags() {
 fn duplicate_sprint_flags() {
     let mut h = Harness::new(flat_world(stone()), SPAWN);
     // The first duplicate is exempt (the client may start either way).
-    h.send(vec![Serverbound::PlayerCommand { action: 2 }, Serverbound::PlayerCommand { action: 2 }]);
-    h.send(vec![Serverbound::PlayerCommand { action: 1 }, Serverbound::PlayerCommand { action: 1 }]);
+    h.send(vec![
+        Serverbound::PlayerCommand { action: 2 },
+        Serverbound::PlayerCommand { action: 2 },
+    ]);
+    h.send(vec![
+        Serverbound::PlayerCommand { action: 1 },
+        Serverbound::PlayerCommand { action: 1 },
+    ]);
     assert_eq!(h.flagged(CheckId::BadPacketsF), 1, "{:?}", h.flags);
 }
 
@@ -154,8 +202,18 @@ fn missing_tick_end_flags_tick_timer() {
     let mut h = Harness::new(flat_world(stone()), SPAWN);
     h.tick(Keys::default());
     h.send(vec![
-        Serverbound::Move { pos: None, rot: Some((10.0, 0.0)), on_ground: true, horizontal_collision: false },
-        Serverbound::Move { pos: None, rot: Some((20.0, 0.0)), on_ground: true, horizontal_collision: false },
+        Serverbound::Move {
+            pos: None,
+            rot: Some((10.0, 0.0)),
+            on_ground: true,
+            horizontal_collision: false,
+        },
+        Serverbound::Move {
+            pos: None,
+            rot: Some((20.0, 0.0)),
+            on_ground: true,
+            horizontal_collision: false,
+        },
         Serverbound::TickEnd,
     ]);
     assert!(h.flagged(CheckId::TickTimer) >= 1, "{:?}", h.flags);
@@ -164,7 +222,9 @@ fn missing_tick_end_flags_tick_timer() {
 #[test]
 fn unknown_transaction_flags_order() {
     let mut h = Harness::new(flat_world(stone()), SPAWN);
-    h.send(vec![Serverbound::Pong { id: grim_horizon_engine::PING_MARK | 99_999 }]);
+    h.send(vec![Serverbound::Pong {
+        id: grim_horizon_engine::PING_MARK | 99_999,
+    }]);
     assert_eq!(h.flagged(CheckId::TransactionOrder), 1);
     // Pongs for pings that are not ours are ignored.
     h.send(vec![Serverbound::Pong { id: 5 }]);
@@ -174,6 +234,10 @@ fn unknown_transaction_flags_order() {
 #[test]
 fn unknown_teleport_accept_flags() {
     let mut h = Harness::new(flat_world(stone()), SPAWN);
-    h.send(vec![Serverbound::AcceptTeleport { id: 77, pos: SPAWN, rot: (0.0, 0.0) }]);
+    h.send(vec![Serverbound::AcceptTeleport {
+        id: 77,
+        pos: SPAWN,
+        rot: (0.0, 0.0),
+    }]);
     assert_eq!(h.flagged(CheckId::BadPacketsN), 1);
 }

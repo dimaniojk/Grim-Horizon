@@ -65,7 +65,10 @@ impl Keys {
             | u8::from(self.sprint) << 6
     }
     pub fn forward() -> Self {
-        Keys { forward: true, ..Default::default() }
+        Keys {
+            forward: true,
+            ..Default::default()
+        }
     }
 }
 
@@ -74,7 +77,14 @@ impl Keys {
 fn player_box(p: Vec3, height: f64) -> Aabb {
     let half = f64::from(0.6_f32 / 2.0);
     let height = f64::from(height as f32);
-    Aabb::new(p.x - half, p.y, p.z - half, p.x + half, p.y + height, p.z + half)
+    Aabb::new(
+        p.x - half,
+        p.y,
+        p.z - half,
+        p.x + half,
+        p.y + height,
+        p.z + half,
+    )
 }
 
 impl Client {
@@ -118,7 +128,12 @@ impl Client {
         use grim_horizon_engine::world::BlockView;
         let bb = player_box(self.pos, self.height());
         let mut boxes = Vec::new();
-        world.collision_boxes(bb.expand_towards(m.x, m.y, m.z).expand(0.0, 0.6, 0.0).inflate(1.0), &mut boxes);
+        world.collision_boxes(
+            bb.expand_towards(m.x, m.y, m.z)
+                .expand(0.0, 0.6, 0.0)
+                .inflate(1.0),
+            &mut boxes,
+        );
         let along = |mut v: Vec3, start: Aabb| {
             let mut b = start;
             for c in &boxes {
@@ -180,7 +195,14 @@ impl Client {
             return;
         }
         let find = |bb: Aabb| -> Option<[i32; 3]> {
-            let below = Aabb::new(bb.min_x, bb.min_y - 1.0e-6, bb.min_z, bb.max_x, bb.min_y, bb.max_z);
+            let below = Aabb::new(
+                bb.min_x,
+                bb.min_y - 1.0e-6,
+                bb.min_z,
+                bb.max_x,
+                bb.min_y,
+                bb.max_z,
+            );
             let mut best: Option<([i32; 3], f64)> = None;
             for x in (below.min_x.floor() as i32)..=(below.max_x.floor() as i32) {
                 for y in (below.min_y.floor() as i32)..=(below.max_y.floor() as i32) {
@@ -190,11 +212,18 @@ impl Client {
                         if !boxes.iter().any(|c| c.intersects(&below)) {
                             continue;
                         }
-                        let c = Vec3::new(f64::from(x) + 0.5, f64::from(y) + 0.5, f64::from(z) + 0.5);
+                        let c =
+                            Vec3::new(f64::from(x) + 0.5, f64::from(y) + 0.5, f64::from(z) + 0.5);
                         let d = self.pos.distance_squared(c);
                         let better = match best {
                             None => true,
-                            Some((b, bd)) => d < bd || (d == bd && (y < b[1] || (y == b[1] && (x < b[0] || (x == b[0] && z < b[2]))))),
+                            Some((b, bd)) => {
+                                d < bd
+                                    || (d == bd
+                                        && (y < b[1]
+                                            || (y == b[1]
+                                                && (x < b[0] || (x == b[0] && z < b[2])))))
+                            }
                         };
                         if better {
                             best = Some(([x, y, z], d));
@@ -205,7 +234,8 @@ impl Client {
             best.map(|b| b.0)
         };
         let bb = player_box(self.pos, self.height());
-        self.support = find(bb).or_else(|| find(bb.offset(-self.last_move.x, 0.0, -self.last_move.z)));
+        self.support =
+            find(bb).or_else(|| find(bb.offset(-self.last_move.x, 0.0, -self.last_move.z)));
     }
 
     /// `getBlockPosBelowThatAffectsMyMovement` (`getOnPos(0.500001)`).
@@ -214,7 +244,15 @@ impl Client {
         let below_y = (self.pos.y - 0.500001).floor() as i32;
         match self.support {
             Some(s) => world.block(s[0], below_y, s[2]).friction,
-            None => world.block(self.pos.x.floor() as i32, below_y, self.pos.z.floor() as i32).friction,
+            None => {
+                world
+                    .block(
+                        self.pos.x.floor() as i32,
+                        below_y,
+                        self.pos.z.floor() as i32,
+                    )
+                    .friction
+            }
         }
     }
 
@@ -258,9 +296,20 @@ impl Client {
         let fluid_height = self.water_top_over_box(world);
         let water = fluid_height > 0.0;
         self.in_water = water;
-        let feet_in_water = world.fluid(self.pos.x.floor() as i32, self.pos.y.floor() as i32, self.pos.z.floor() as i32).kind == FluidKind::Water;
+        let feet_in_water = world
+            .fluid(
+                self.pos.x.floor() as i32,
+                self.pos.y.floor() as i32,
+                self.pos.z.floor() as i32,
+            )
+            .kind
+            == FluidKind::Water;
         // Player.updateSwimming, with last tick's sprinting.
-        self.swimming = if self.swimming { self.sprinting && water } else { self.sprinting && was_eye_in_water && water && feet_in_water };
+        self.swimming = if self.swimming {
+            self.sprinting && water
+        } else {
+            self.sprinting && was_eye_in_water && water && feet_in_water
+        };
         // updateFluidOnEyes for the next tick.
         self.eye_in_water_last = self.eye_in_water(world);
         let under_water = was_eye_in_water && water;
@@ -281,7 +330,12 @@ impl Client {
         let impulse = keys.forward && !keys.backward;
         if self.sprinting && (!impulse || keys.sneak || (water && !under_water)) {
             self.sprinting = false;
-        } else if !self.sprinting && keys.sprint && impulse && !keys.sneak && (!water || under_water) {
+        } else if !self.sprinting
+            && keys.sprint
+            && impulse
+            && !keys.sneak
+            && (!water || under_water)
+        {
             self.sprinting = true;
         }
         if water && keys.sneak {
@@ -304,7 +358,9 @@ impl Client {
             let threshold = 0.4; // getFluidJumpThreshold: eye height >= 0.4
             if water && !(self.on_ground && fluid_height <= threshold) {
                 self.vel.y += f64::from(0.04_f32); // jumpInLiquid
-            } else if (self.on_ground || (water && fluid_height <= threshold)) && self.no_jump_delay == 0 {
+            } else if (self.on_ground || (water && fluid_height <= threshold))
+                && self.no_jump_delay == 0
+            {
                 let mut power = self.jump_strength;
                 if let Some(level) = self.jump_boost {
                     power += 0.1 * (level + 1) as f32;
@@ -324,7 +380,11 @@ impl Client {
         let fwd = f32::from(i8::from(keys.forward) - i8::from(keys.backward));
         let strafe = f32::from(i8::from(keys.left) - i8::from(keys.right));
         let len = (fwd * fwd + strafe * strafe).sqrt();
-        let (mut ix, mut iz) = if len < 1.0e-4 { (0.0, 0.0) } else { (strafe / len, fwd / len) };
+        let (mut ix, mut iz) = if len < 1.0e-4 {
+            (0.0, 0.0)
+        } else {
+            (strafe / len, fwd / len)
+        };
         if ix != 0.0 || iz != 0.0 {
             ix *= 0.98;
             iz *= 0.98;
@@ -341,14 +401,24 @@ impl Client {
             ix = mx * m;
             iz = mz * m;
         }
-        let speed_attr = if self.sprinting { f64::from((self.movement_speed + self.movement_speed * f64::from(0.3_f32)) as f32) } else { self.movement_speed };
+        let speed_attr = if self.sprinting {
+            f64::from((self.movement_speed + self.movement_speed * f64::from(0.3_f32)) as f32)
+        } else {
+            self.movement_speed
+        };
 
         if water {
             // Player.travel: a swimmer follows its look up and down.
             if self.swimming {
                 let look_y = grim_horizon_engine::math::look_vector(self.yaw, self.pitch).y;
                 let k = if look_y < -0.2 { 0.085 } else { 0.06 };
-                let above = world.fluid(self.pos.x.floor() as i32, (self.pos.y + 1.0 - 0.1).floor() as i32, self.pos.z.floor() as i32).kind;
+                let above = world
+                    .fluid(
+                        self.pos.x.floor() as i32,
+                        (self.pos.y + 1.0 - 0.1).floor() as i32,
+                        self.pos.z.floor() as i32,
+                    )
+                    .kind;
                 if look_y <= 0.0 || keys.jump || above != FluidKind::None {
                     self.vel.y += (look_y - self.vel.y) * k;
                 }
@@ -359,18 +429,34 @@ impl Client {
             let m = self.vel;
             let r = self.collide(world, m);
             self.apply_move(m, r, world);
-            self.vel = self.vel.mul(f64::from(friction), f64::from(0.8_f32), f64::from(friction));
+            self.vel = self
+                .vel
+                .mul(f64::from(friction), f64::from(0.8_f32), f64::from(friction));
             // Fluid-falling adjustment (not sprinting).
             if !self.sprinting {
                 let g = 0.08;
                 let y = self.vel.y;
-                self.vel.y = if falling && (y - 0.005).abs() >= 0.003 && (y - g / 16.0).abs() < 0.003 { -0.003 } else { y - g / 16.0 };
+                self.vel.y =
+                    if falling && (y - 0.005).abs() >= 0.003 && (y - g / 16.0).abs() < 0.003 {
+                        -0.003
+                    } else {
+                        y - g / 16.0
+                    };
             }
         } else {
             let block_friction = self.block_friction(world);
-            let friction = if self.on_ground { f64::from(block_friction * 0.91) } else { 0.91 };
+            let friction = if self.on_ground {
+                f64::from(block_friction * 0.91)
+            } else {
+                0.91
+            };
             let speed = if self.on_ground {
-                if block_friction <= 0.6 { speed_attr as f32 } else { speed_attr as f32 * (0.21600002 / (block_friction * block_friction * block_friction)) }
+                if block_friction <= 0.6 {
+                    speed_attr as f32
+                } else {
+                    speed_attr as f32
+                        * (0.21600002 / (block_friction * block_friction * block_friction))
+                }
             } else if self.sprinting {
                 0.025999999
             } else {
@@ -453,7 +539,10 @@ impl Client {
 
     fn move_relative(&mut self, speed: f32, ix: f32, iz: f32) {
         let r = self.yaw * (std::f64::consts::PI / 180.0) as f32;
-        let (sin, cos) = (f64::from(mc_sin(f64::from(r))), f64::from(mc_cos(f64::from(r))));
+        let (sin, cos) = (
+            f64::from(mc_sin(f64::from(r))),
+            f64::from(mc_cos(f64::from(r))),
+        );
         let (ix, iz) = (f64::from(ix), f64::from(iz));
         let s = f64::from(speed);
         self.vel.x += (ix * cos - iz * sin) * s;
@@ -463,7 +552,8 @@ impl Client {
     fn apply_move(&mut self, wanted: Vec3, done: Vec3, world: &TestWorld) {
         use grim_horizon_engine::world::BlockView;
         let mut done = done;
-        if done.length_squared() <= 1e-7 && wanted.length_squared() - done.length_squared() >= 1e-7 {
+        if done.length_squared() <= 1e-7 && wanted.length_squared() - done.length_squared() >= 1e-7
+        {
             done = Vec3::ZERO;
         }
         self.pos = self.pos.add(done);
@@ -481,7 +571,11 @@ impl Client {
         self.update_supporting_block(world);
         if vertical {
             // Slime bounces (not while sneaking).
-            let below = world.block(self.pos.x.floor() as i32, (self.pos.y - 0.2).floor() as i32, self.pos.z.floor() as i32);
+            let below = world.block(
+                self.pos.x.floor() as i32,
+                (self.pos.y - 0.2).floor() as i32,
+                self.pos.z.floor() as i32,
+            );
             if below.kind == BlockKind::SlimeBlock && !self.sneaking && self.vel.y < 0.0 {
                 // getVelocityAfterVerticalCollision with restitution 1.
                 let g = 0.08;
@@ -497,9 +591,21 @@ impl Client {
             }
         }
         // Block speed factor (soul sand / honey under the player).
-        let under = world.block(self.pos.x.floor() as i32, (self.pos.y - 0.500001).floor() as i32, self.pos.z.floor() as i32);
-        let inside = world.block(self.pos.x.floor() as i32, self.pos.y.floor() as i32, self.pos.z.floor() as i32);
-        let f = if inside.speed_factor != 1.0 { inside.speed_factor } else { under.speed_factor };
+        let under = world.block(
+            self.pos.x.floor() as i32,
+            (self.pos.y - 0.500001).floor() as i32,
+            self.pos.z.floor() as i32,
+        );
+        let inside = world.block(
+            self.pos.x.floor() as i32,
+            self.pos.y.floor() as i32,
+            self.pos.z.floor() as i32,
+        );
+        let f = if inside.speed_factor != 1.0 {
+            inside.speed_factor
+        } else {
+            under.speed_factor
+        };
         self.vel.x *= f64::from(f);
         self.vel.z *= f64::from(f);
     }
@@ -560,16 +666,30 @@ impl Harness {
     pub fn teleport(&mut self, pos: Vec3) {
         self.teleport_id += 1;
         let id = self.teleport_id;
-        self.engine.on_outgoing(KEY, Clientbound::Teleport { id, pos, delta: Vec3::ZERO, relatives: 0 });
+        self.engine.on_outgoing(
+            KEY,
+            Clientbound::Teleport {
+                id,
+                pos,
+                delta: Vec3::ZERO,
+                relatives: 0,
+            },
+        );
         self.client.pos = pos;
         self.client.vel = Vec3::ZERO;
         self.client.last_sent_pos = pos;
-        self.send(vec![Serverbound::AcceptTeleport { id, pos, rot: (self.client.yaw, self.client.pitch) }]);
+        self.send(vec![Serverbound::AcceptTeleport {
+            id,
+            pos,
+            rot: (self.client.yaw, self.client.pitch),
+        }]);
     }
 
     pub fn send(&mut self, packets: Vec<Serverbound>) {
         let start = std::time::Instant::now();
-        let v = self.engine.on_incoming(KEY, &packets, &self.world, self.now);
+        let v = self
+            .engine
+            .on_incoming(KEY, &packets, &self.world, self.now);
         self.engine_nanos += start.elapsed().as_nanos() as u64;
         self.verdicts.extend(v);
         self.collect();
@@ -581,7 +701,8 @@ impl Harness {
                 let mut parts = text.splitn(2, '|');
                 let name = parts.next().unwrap_or_default();
                 if let Some(c) = CheckId::from_name(name) {
-                    self.flags.push((c, parts.next().unwrap_or_default().to_owned()));
+                    self.flags
+                        .push((c, parts.next().unwrap_or_default().to_owned()));
                 }
             }
             if let Action::SendPing { key: KEY, id } = a {
@@ -638,7 +759,9 @@ impl Harness {
         self.client.tick(&self.world, keys);
         tamper(&mut self.client);
         if self.client.sprinting != self.client.last_sent_sprint {
-            packets.push(Serverbound::PlayerCommand { action: if self.client.sprinting { 1 } else { 2 } });
+            packets.push(Serverbound::PlayerCommand {
+                action: if self.client.sprinting { 1 } else { 2 },
+            });
             self.client.last_sent_sprint = self.client.sprinting;
         }
         // LocalPlayer.sendPosition.
@@ -648,13 +771,33 @@ impl Harness {
         let moved = d.length_squared() > 2.0e-4 * 2.0e-4 || c.position_reminder >= 20;
         let turned = (c.yaw, c.pitch) != c.last_sent_rot;
         let packet = if moved && turned {
-            Some(Serverbound::Move { pos: Some(c.pos), rot: Some((c.yaw, c.pitch)), on_ground: c.on_ground, horizontal_collision: false })
+            Some(Serverbound::Move {
+                pos: Some(c.pos),
+                rot: Some((c.yaw, c.pitch)),
+                on_ground: c.on_ground,
+                horizontal_collision: false,
+            })
         } else if moved {
-            Some(Serverbound::Move { pos: Some(c.pos), rot: None, on_ground: c.on_ground, horizontal_collision: false })
+            Some(Serverbound::Move {
+                pos: Some(c.pos),
+                rot: None,
+                on_ground: c.on_ground,
+                horizontal_collision: false,
+            })
         } else if turned {
-            Some(Serverbound::Move { pos: None, rot: Some((c.yaw, c.pitch)), on_ground: c.on_ground, horizontal_collision: false })
+            Some(Serverbound::Move {
+                pos: None,
+                rot: Some((c.yaw, c.pitch)),
+                on_ground: c.on_ground,
+                horizontal_collision: false,
+            })
         } else if c.on_ground != c.last_sent_ground {
-            Some(Serverbound::Move { pos: None, rot: None, on_ground: c.on_ground, horizontal_collision: false })
+            Some(Serverbound::Move {
+                pos: None,
+                rot: None,
+                on_ground: c.on_ground,
+                horizontal_collision: false,
+            })
         } else {
             None
         };

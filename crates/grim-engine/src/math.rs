@@ -1,6 +1,6 @@
 // Grim-Horizon: a Rust port of Grim Anticheat (https://github.com/GrimAnticheat/Grim).
 // Copyright (C) GrimAC contributors (original Java), Grim-Horizon contributors (port).
-// Licensed under the GNU General Public License v3.0 only; see LICENSE.
+// Licensed under the GNU General Public License, version 3 or (at your option) any later version; see LICENSE.
 
 //! Vectors, boxes and Minecraft's math, ported from Grim's `Vector3dm`,
 //! `SimpleCollisionBox`, `GrimMath`, `VectorUtils` and `ModernVanillaMath`
@@ -11,6 +11,7 @@ use std::sync::OnceLock;
 /// `SimpleCollisionBox.COLLISION_EPSILON`.
 pub const COLLISION_EPSILON: f64 = 1.0e-7;
 
+/// A double-precision vector; method names follow Grim's `Vector3dm`.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Vec3 {
     pub x: f64,
@@ -18,8 +19,13 @@ pub struct Vec3 {
     pub z: f64,
 }
 
+#[allow(clippy::should_implement_trait)]
 impl Vec3 {
-    pub const ZERO: Vec3 = Vec3 { x: 0.0, y: 0.0, z: 0.0 };
+    pub const ZERO: Vec3 = Vec3 {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
 
     #[inline]
     pub const fn new(x: f64, y: f64, z: f64) -> Self {
@@ -96,8 +102,22 @@ pub struct Aabb {
 
 impl Aabb {
     #[inline]
-    pub const fn new(min_x: f64, min_y: f64, min_z: f64, max_x: f64, max_y: f64, max_z: f64) -> Self {
-        Self { min_x, min_y, min_z, max_x, max_y, max_z }
+    pub const fn new(
+        min_x: f64,
+        min_y: f64,
+        min_z: f64,
+        max_x: f64,
+        max_y: f64,
+        max_z: f64,
+    ) -> Self {
+        Self {
+            min_x,
+            min_y,
+            min_z,
+            max_x,
+            max_y,
+            max_z,
+        }
     }
     pub fn from_points(a: Vec3, b: Vec3) -> Self {
         Self::new(a.x, a.y, a.z, b.x, b.y, b.z).sorted()
@@ -251,10 +271,18 @@ impl Aabb {
         {
             if offset_x >= 0.0 {
                 let max_move = self.min_x - moving.max_x;
-                return if max_move < -COLLISION_EPSILON { offset_x } else { max_move.min(offset_x) };
+                return if max_move < -COLLISION_EPSILON {
+                    offset_x
+                } else {
+                    max_move.min(offset_x)
+                };
             } else {
                 let max_move = self.max_x - moving.min_x;
-                return if max_move > COLLISION_EPSILON { offset_x } else { max_move.max(offset_x) };
+                return if max_move > COLLISION_EPSILON {
+                    offset_x
+                } else {
+                    max_move.max(offset_x)
+                };
             }
         }
         offset_x
@@ -269,10 +297,18 @@ impl Aabb {
         {
             if offset_y >= 0.0 {
                 let max_move = self.min_y - moving.max_y;
-                return if max_move < -COLLISION_EPSILON { offset_y } else { max_move.min(offset_y) };
+                return if max_move < -COLLISION_EPSILON {
+                    offset_y
+                } else {
+                    max_move.min(offset_y)
+                };
             } else {
                 let max_move = self.max_y - moving.min_y;
-                return if max_move > COLLISION_EPSILON { offset_y } else { max_move.max(offset_y) };
+                return if max_move > COLLISION_EPSILON {
+                    offset_y
+                } else {
+                    max_move.max(offset_y)
+                };
             }
         }
         offset_y
@@ -287,10 +323,18 @@ impl Aabb {
         {
             if offset_z >= 0.0 {
                 let max_move = self.min_z - moving.max_z;
-                return if max_move < -COLLISION_EPSILON { offset_z } else { max_move.min(offset_z) };
+                return if max_move < -COLLISION_EPSILON {
+                    offset_z
+                } else {
+                    max_move.min(offset_z)
+                };
             } else {
                 let max_move = self.max_z - moving.min_z;
-                return if max_move > COLLISION_EPSILON { offset_z } else { max_move.max(offset_z) };
+                return if max_move > COLLISION_EPSILON {
+                    offset_z
+                } else {
+                    max_move.max(offset_z)
+                };
             }
         }
         offset_z
@@ -319,9 +363,15 @@ impl Aabb {
             }
         };
         let bx = |p: Option<Vec3>, f: &dyn Fn(Vec3) -> bool| p.filter(|v| f(*v));
-        let in_yz = |v: Vec3| v.y >= self.min_y && v.y <= self.max_y && v.z >= self.min_z && v.z <= self.max_z;
-        let in_xz = |v: Vec3| v.x >= self.min_x && v.x <= self.max_x && v.z >= self.min_z && v.z <= self.max_z;
-        let in_xy = |v: Vec3| v.x >= self.min_x && v.x <= self.max_x && v.y >= self.min_y && v.y <= self.max_y;
+        let in_yz = |v: Vec3| {
+            v.y >= self.min_y && v.y <= self.max_y && v.z >= self.min_z && v.z <= self.max_z
+        };
+        let in_xz = |v: Vec3| {
+            v.x >= self.min_x && v.x <= self.max_x && v.z >= self.min_z && v.z <= self.max_z
+        };
+        let in_xy = |v: Vec3| {
+            v.x >= self.min_x && v.x <= self.max_x && v.y >= self.min_y && v.y <= self.max_y
+        };
         consider(bx(intermediate_x(start, end, self.min_x), &in_yz));
         consider(bx(intermediate_x(start, end, self.max_x), &in_yz));
         consider(bx(intermediate_y(start, end, self.min_y), &in_xz));
@@ -338,7 +388,9 @@ fn intermediate_x(a: Vec3, b: Vec3, x: f64) -> Option<Vec3> {
         return None;
     }
     let t = (x - a.x) / d;
-    (0.0..=1.0).contains(&t).then(|| Vec3::new(a.x + d * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t))
+    (0.0..=1.0)
+        .contains(&t)
+        .then(|| Vec3::new(a.x + d * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t))
 }
 fn intermediate_y(a: Vec3, b: Vec3, y: f64) -> Option<Vec3> {
     let d = b.y - a.y;
@@ -346,7 +398,9 @@ fn intermediate_y(a: Vec3, b: Vec3, y: f64) -> Option<Vec3> {
         return None;
     }
     let t = (y - a.y) / d;
-    (0.0..=1.0).contains(&t).then(|| Vec3::new(a.x + (b.x - a.x) * t, a.y + d * t, a.z + (b.z - a.z) * t))
+    (0.0..=1.0)
+        .contains(&t)
+        .then(|| Vec3::new(a.x + (b.x - a.x) * t, a.y + d * t, a.z + (b.z - a.z) * t))
 }
 fn intermediate_z(a: Vec3, b: Vec3, z: f64) -> Option<Vec3> {
     let d = b.z - a.z;
@@ -354,7 +408,9 @@ fn intermediate_z(a: Vec3, b: Vec3, z: f64) -> Option<Vec3> {
         return None;
     }
     let t = (z - a.z) / d;
-    (0.0..=1.0).contains(&t).then(|| Vec3::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + d * t))
+    (0.0..=1.0)
+        .contains(&t)
+        .then(|| Vec3::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + d * t))
 }
 
 /// `VectorUtils.cutBoxToVector`: the point of `[min, max]` closest to `target`.
@@ -412,7 +468,11 @@ pub fn wrap_degrees(d: f32) -> f32 {
 
 fn sin_table() -> &'static [f32] {
     static TABLE: OnceLock<Vec<f32>> = OnceLock::new();
-    TABLE.get_or_init(|| (0..65536).map(|i| (f64::from(i) / 10430.378350470453).sin() as f32).collect())
+    TABLE.get_or_init(|| {
+        (0..65536)
+            .map(|i| (f64::from(i) / 10430.378350470453).sin() as f32)
+            .collect()
+    })
 }
 
 /// `ModernVanillaMath.sin` (`Mth.sin` since 1.21.11): a 65536-entry table
@@ -461,9 +521,14 @@ mod tests {
     #[test]
     fn intercept_hits_front_face() {
         let b = Aabb::new(2.0, 0.0, -0.5, 3.0, 2.0, 0.5);
-        let hit = b.intercept(Vec3::new(0.0, 1.0, 0.0), Vec3::new(6.0, 1.0, 0.0)).unwrap();
+        let hit = b
+            .intercept(Vec3::new(0.0, 1.0, 0.0), Vec3::new(6.0, 1.0, 0.0))
+            .unwrap();
         assert!((hit.x - 2.0).abs() < 1e-12);
-        assert!(b.intercept(Vec3::new(0.0, 5.0, 0.0), Vec3::new(6.0, 5.0, 0.0)).is_none());
+        assert!(
+            b.intercept(Vec3::new(0.0, 5.0, 0.0), Vec3::new(6.0, 5.0, 0.0))
+                .is_none()
+        );
     }
 
     #[test]

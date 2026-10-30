@@ -1,0 +1,51 @@
+# Grim-Horizon: a native Rust port of Grim Anticheat for Horizon servers.
+# Changes apply on `/grim reload`.
+
+enabled = true
+# alert-only: flag and alert staff, never touch the player (the default until
+#             the checks have been validated on your server)
+# setback:    also teleport players back after movement violations
+# punish:     also kick at each check's kick_vl
+mode = "alert-only"
+# Operator level for /grim commands and alerts.
+permission_level = 2
+# Never checked (names, any case).
+exempt_players = []
+# Kick a player who leaves our ping transactions unanswered this long (0: off).
+max_transaction_time_seconds = 60
+
+[alerts]
+enabled_on_join = true
+print_to_console = true
+format = "[Grim] %player% failed %check% (x%vl%) %verbose%"
+
+[simulation]
+threshold = 0.001
+immediate_setback_threshold = 0.1
+max_advantage = 1.0
+max_ceiling = 4.0
+setback_decay_multiplier = 0.999
+setback_violation_threshold = 1.0
+
+[knockback]
+threshold = 0.001
+max_advantage = 1.0
+immediate_setback_threshold = 0.1
+setback_decay_multiplier = 0.999
+max_ceiling = 4.0
+
+[explosion]
+threshold = 0.00001
+
+[timer]
+drift_ms = 120.0
+
+[reach]
+threshold = 0.0005
+interpolation_ticks = 4
+
+# Per-check overrides, by Grim's names. Example:
+# [checks.Reach]
+# enabled = true
+# alert_interval = 1
+# kick_vl = 0.0

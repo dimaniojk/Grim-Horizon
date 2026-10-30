@@ -1,6 +1,6 @@
 // Grim-Horizon: a Rust port of Grim Anticheat (https://github.com/GrimAnticheat/Grim).
 // Copyright (C) GrimAC contributors (original Java), Grim-Horizon contributors (port).
-// Licensed under the GNU General Public License v3.0 only; see LICENSE.
+// Licensed under the GNU General Public License, version 3 or (at your option) any later version; see LICENSE.
 
 //! The check registry and violation bookkeeping (Grim's `Check`,
 //! `@CheckData` and `PunishmentManager`, reduced to what the port uses).
@@ -76,38 +76,183 @@ impl CheckId {
 
     pub fn info(self) -> CheckInfo {
         // CheckData defaults: decay 0.05, setback 25.
-        let i = |name, config_name, description, decay, setback_vl| CheckInfo { name, config_name, description, decay, setback_vl };
+        let i = |name, config_name, description, decay, setback_vl| CheckInfo {
+            name,
+            config_name,
+            description,
+            decay,
+            setback_vl,
+        };
         match self {
-            CheckId::Simulation => i("Simulation", "Simulation", "Moved differently than predicted movement simulation", 0.02, 25.0),
-            CheckId::GroundSpoof => i("GroundSpoof", "GroundSpoof", "Claimed to be on ground when predicted otherwise", 0.01, 10.0),
-            CheckId::NoFall => i("NoFall", "NoFall", "Sent an on-ground packet while not colliding with the ground", 0.05, 10.0),
-            CheckId::Timer => i("Timer", "TimerA", "The players game is running faster than normal", 0.05, 10.0),
-            CheckId::TickTimer => i("TickTimer", "TickTimer", "Did not send client tick end packet", 0.05, 1.0),
-            CheckId::AntiKB => i("AntiKB", "Knockback", "Did not take the expected entity knockback", 0.025, 10.0),
-            CheckId::AntiExplosion => i("AntiExplosion", "Explosion", "Did not take the expected explosion knockback", 0.05, 10.0),
-            CheckId::Reach => i("Reach", "Reach", "Attacked an entity from too far away", 0.05, 25.0),
-            CheckId::Hitboxes => i("Hitboxes", "Hitboxes", "Tried to hit an entity outside its valid hitbox", 0.05, 25.0),
-            CheckId::BadPacketsA => i("BadPacketsA", "BadPacketsA", "Sent duplicate slot id", 0.05, 25.0),
-            CheckId::BadPacketsD => i("BadPacketsD", "BadPacketsD", "Sent an invalid rotation pitch outside the -90 to 90 range", 0.05, 25.0),
-            CheckId::BadPacketsE => i("BadPacketsE", "BadPacketsE", "Sent too many movement packets without updating position", 0.05, 25.0),
-            CheckId::BadPacketsF => i("BadPacketsF", "BadPacketsF", "Sent duplicate sprinting status", 0.05, 25.0),
-            CheckId::BadPacketsI => i("BadPacketsI", "BadPacketsI", "Claimed to be flying while unable to fly", 0.05, 25.0),
-            CheckId::BadPacketsN => i("BadPacketsN", "BadPacketsN", "Ignored or failed to accept a required server teleport", 0.05, 25.0),
-            CheckId::BadPacketsY => i("BadPacketsY", "BadPacketsY", "Sent out of bounds slot id", 0.05, 25.0),
-            CheckId::CrashA => i("CrashA", "CrashA", "Sent a position outside the valid world bounds", 0.05, 25.0),
-            CheckId::CrashC => i("CrashC", "CrashC", "Sent non-finite position or rotation", 0.05, 25.0),
-            CheckId::SelfInteract => i("SelfInteract", "SelfInteract", "Interacted with self", 0.05, 25.0),
-            CheckId::TransactionOrder => i("TransactionOrder", "TransactionOrder", "Sent transaction or ping responses in an invalid order", 0.05, 25.0),
-            CheckId::AimModulo360 => i("AimModulo360", "AimModulo360", "Sent a large yaw snap", 0.005, 25.0),
-            CheckId::AimDuplicateLook => i("AimDuplicateLook", "AimDuplicateLook", "Sent a duplicate rotation update without changing look direction", 0.05, 25.0),
-            CheckId::PacketOrderB => i("PacketOrderB", "PacketOrderB", "Did not swing for attack", 0.05, 25.0),
+            CheckId::Simulation => i(
+                "Simulation",
+                "Simulation",
+                "Moved differently than predicted movement simulation",
+                0.02,
+                25.0,
+            ),
+            CheckId::GroundSpoof => i(
+                "GroundSpoof",
+                "GroundSpoof",
+                "Claimed to be on ground when predicted otherwise",
+                0.01,
+                10.0,
+            ),
+            CheckId::NoFall => i(
+                "NoFall",
+                "NoFall",
+                "Sent an on-ground packet while not colliding with the ground",
+                0.05,
+                10.0,
+            ),
+            CheckId::Timer => i(
+                "Timer",
+                "TimerA",
+                "The players game is running faster than normal",
+                0.05,
+                10.0,
+            ),
+            CheckId::TickTimer => i(
+                "TickTimer",
+                "TickTimer",
+                "Did not send client tick end packet",
+                0.05,
+                1.0,
+            ),
+            CheckId::AntiKB => i(
+                "AntiKB",
+                "Knockback",
+                "Did not take the expected entity knockback",
+                0.025,
+                10.0,
+            ),
+            CheckId::AntiExplosion => i(
+                "AntiExplosion",
+                "Explosion",
+                "Did not take the expected explosion knockback",
+                0.05,
+                10.0,
+            ),
+            CheckId::Reach => i(
+                "Reach",
+                "Reach",
+                "Attacked an entity from too far away",
+                0.05,
+                25.0,
+            ),
+            CheckId::Hitboxes => i(
+                "Hitboxes",
+                "Hitboxes",
+                "Tried to hit an entity outside its valid hitbox",
+                0.05,
+                25.0,
+            ),
+            CheckId::BadPacketsA => i(
+                "BadPacketsA",
+                "BadPacketsA",
+                "Sent duplicate slot id",
+                0.05,
+                25.0,
+            ),
+            CheckId::BadPacketsD => i(
+                "BadPacketsD",
+                "BadPacketsD",
+                "Sent an invalid rotation pitch outside the -90 to 90 range",
+                0.05,
+                25.0,
+            ),
+            CheckId::BadPacketsE => i(
+                "BadPacketsE",
+                "BadPacketsE",
+                "Sent too many movement packets without updating position",
+                0.05,
+                25.0,
+            ),
+            CheckId::BadPacketsF => i(
+                "BadPacketsF",
+                "BadPacketsF",
+                "Sent duplicate sprinting status",
+                0.05,
+                25.0,
+            ),
+            CheckId::BadPacketsI => i(
+                "BadPacketsI",
+                "BadPacketsI",
+                "Claimed to be flying while unable to fly",
+                0.05,
+                25.0,
+            ),
+            CheckId::BadPacketsN => i(
+                "BadPacketsN",
+                "BadPacketsN",
+                "Ignored or failed to accept a required server teleport",
+                0.05,
+                25.0,
+            ),
+            CheckId::BadPacketsY => i(
+                "BadPacketsY",
+                "BadPacketsY",
+                "Sent out of bounds slot id",
+                0.05,
+                25.0,
+            ),
+            CheckId::CrashA => i(
+                "CrashA",
+                "CrashA",
+                "Sent a position outside the valid world bounds",
+                0.05,
+                25.0,
+            ),
+            CheckId::CrashC => i(
+                "CrashC",
+                "CrashC",
+                "Sent non-finite position or rotation",
+                0.05,
+                25.0,
+            ),
+            CheckId::SelfInteract => i(
+                "SelfInteract",
+                "SelfInteract",
+                "Interacted with self",
+                0.05,
+                25.0,
+            ),
+            CheckId::TransactionOrder => i(
+                "TransactionOrder",
+                "TransactionOrder",
+                "Sent transaction or ping responses in an invalid order",
+                0.05,
+                25.0,
+            ),
+            CheckId::AimModulo360 => i(
+                "AimModulo360",
+                "AimModulo360",
+                "Sent a large yaw snap",
+                0.005,
+                25.0,
+            ),
+            CheckId::AimDuplicateLook => i(
+                "AimDuplicateLook",
+                "AimDuplicateLook",
+                "Sent a duplicate rotation update without changing look direction",
+                0.05,
+                25.0,
+            ),
+            CheckId::PacketOrderB => i(
+                "PacketOrderB",
+                "PacketOrderB",
+                "Did not swing for attack",
+                0.05,
+                25.0,
+            ),
         }
     }
 
     pub fn from_name(name: &str) -> Option<CheckId> {
-        CheckId::ALL
-            .into_iter()
-            .find(|c| c.info().name.eq_ignore_ascii_case(name) || c.info().config_name.eq_ignore_ascii_case(name))
+        CheckId::ALL.into_iter().find(|c| {
+            c.info().name.eq_ignore_ascii_case(name)
+                || c.info().config_name.eq_ignore_ascii_case(name)
+        })
     }
 
     fn index(self) -> usize {
@@ -137,7 +282,10 @@ pub struct Violations {
 
 impl Default for Violations {
     fn default() -> Self {
-        Self { vl: [0.0; CheckId::ALL.len()], flags: [0; CheckId::ALL.len()] }
+        Self {
+            vl: [0.0; CheckId::ALL.len()],
+            flags: [0; CheckId::ALL.len()],
+        }
     }
 }
 
@@ -165,7 +313,7 @@ impl Violations {
             check: c,
             vl: self.vl[i],
             verbose,
-            alert: self.flags[i] % interval == 0,
+            alert: self.flags[i].is_multiple_of(interval),
             setback: self.vl[i] > setback_vl,
             kick: config.punishments_enabled() && cc.kick_vl > 0.0 && self.vl[i] >= cc.kick_vl,
         })
@@ -182,7 +330,11 @@ impl Violations {
     }
     /// Checks with a violation level, highest first.
     pub fn summary(&self) -> Vec<(CheckId, f64)> {
-        let mut v: Vec<_> = CheckId::ALL.iter().map(|c| (*c, self.vl(*c))).filter(|(_, vl)| *vl > 0.0).collect();
+        let mut v: Vec<_> = CheckId::ALL
+            .iter()
+            .map(|c| (*c, self.vl(*c)))
+            .filter(|(_, vl)| *vl > 0.0)
+            .collect();
         v.sort_by(|a, b| b.1.total_cmp(&a.1));
         v
     }
@@ -196,7 +348,9 @@ mod tests {
     fn flag_and_decay() {
         let config = Config::default();
         let mut v = Violations::default();
-        let f = v.flag(&config, CheckId::GroundSpoof, "claimed true".into()).unwrap();
+        let f = v
+            .flag(&config, CheckId::GroundSpoof, "claimed true".into())
+            .unwrap();
         assert_eq!(f.vl, 1.0);
         assert!(f.alert && !f.kick && !f.setback);
         v.reward(&config, CheckId::GroundSpoof);

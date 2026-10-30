@@ -1,6 +1,6 @@
 // Grim-Horizon: a Rust port of Grim Anticheat (https://github.com/GrimAnticheat/Grim).
 // Copyright (C) GrimAC contributors (original Java), Grim-Horizon contributors (port).
-// Licensed under the GNU General Public License v3.0 only; see LICENSE.
+// Licensed under the GNU General Public License, version 3 or (at your option) any later version; see LICENSE.
 
 //! The movement prediction engine: Grim's `MovementCheckRunner.check`,
 //! `PlayerBaseTick`, `MovementTicker`/`MovementTickerPlayer`,
@@ -17,7 +17,9 @@
 
 use crate::collisions;
 use crate::fluid;
-use crate::math::{Aabb, COLLISION_EPSILON, Vec3, cut_box_to_vector, floor, grim_equal, mc_cos, mc_sin, radians};
+use crate::math::{
+    Aabb, COLLISION_EPSILON, Vec3, cut_box_to_vector, floor, grim_equal, mc_cos, mc_sin, radians,
+};
 use crate::player::{Attr, Effect, KnownInput, MOVEMENT_THRESHOLD, Movement, Pose, VectorData, vt};
 use crate::velocity::{ExplosionHandler, KnockbackHandler, VelocityConfig};
 use crate::world::{BlockKind, BlockView};
@@ -57,7 +59,11 @@ pub struct PredictionComplete {
 #[derive(Clone, Copy, PartialEq)]
 enum EngineKind {
     Normal,
-    Water { gravity: f64, falling: bool, friction: f32 },
+    Water {
+        gravity: f64,
+        falling: bool,
+        friction: f32,
+    },
     Lava,
 }
 
@@ -65,7 +71,12 @@ enum EngineKind {
 pub fn check(p: &mut Movement, cx: &mut Context<'_>, update: PositionUpdate) -> PredictionComplete {
     if update.is_teleport {
         handle_teleport(p, cx, update);
-        return PredictionComplete { offset: 0.0, checked: true, teleport: true, skipped: None };
+        return PredictionComplete {
+            offset: 0.0,
+            checked: true,
+            teleport: true,
+            skipped: None,
+        };
     }
     p.uncertainty.tick();
     p.on_ground = update.on_ground;
@@ -89,10 +100,14 @@ pub fn check(p: &mut Movement, cx: &mut Context<'_>, update: PositionUpdate) -> 
         let fast = (reach.0, reach.1, -reach.0, -reach.1);
         let (mut east, mut west, mut north, mut south) = (false, false, false, false);
         for (pos_x, pos_z, neg_x, neg_z) in [long, (0.05, 0.05, -0.05, -0.05), fast] {
-            let ne = collisions::maybe_back_off_from_edge(Vec3::new(pos_x, 0.0, neg_z), p, cx.world);
-            let nw = collisions::maybe_back_off_from_edge(Vec3::new(neg_x, 0.0, neg_z), p, cx.world);
-            let se = collisions::maybe_back_off_from_edge(Vec3::new(pos_x, 0.0, pos_z), p, cx.world);
-            let sw = collisions::maybe_back_off_from_edge(Vec3::new(neg_x, 0.0, pos_z), p, cx.world);
+            let ne =
+                collisions::maybe_back_off_from_edge(Vec3::new(pos_x, 0.0, neg_z), p, cx.world);
+            let nw =
+                collisions::maybe_back_off_from_edge(Vec3::new(neg_x, 0.0, neg_z), p, cx.world);
+            let se =
+                collisions::maybe_back_off_from_edge(Vec3::new(pos_x, 0.0, pos_z), p, cx.world);
+            let sw =
+                collisions::maybe_back_off_from_edge(Vec3::new(neg_x, 0.0, pos_z), p, cx.world);
             east |= ne.x != pos_x || se.x != pos_x;
             west |= nw.x != neg_x || sw.x != neg_x;
             north |= ne.z != neg_z || nw.z != neg_z;
@@ -117,14 +132,22 @@ pub fn check(p: &mut Movement, cx: &mut Context<'_>, update: PositionUpdate) -> 
     }
 
     if p.in_bed {
-        return PredictionComplete { offset: 0.0, checked: false, teleport: false, skipped: Some("sleeping") };
+        return PredictionComplete {
+            offset: 0.0,
+            checked: false,
+            teleport: false,
+            skipped: Some("sleeping"),
+        };
     }
 
     // The client keeps its ground flag through a teleport, so a sneaking
     // player can be held at an "edge" in mid-air for a tick that sends no
     // position while its velocity grows. Give the first prediction after a
     // teleport Grim's minimal sneaking lenience (SneakingEstimator's 0.15).
-    if p.uncertainty.last_teleport_ticks.has_occurred_since(0) && p.is_sneaking && !p.did_last_movement_include_position {
+    if p.uncertainty.last_teleport_ticks.has_occurred_since(0)
+        && p.is_sneaking
+        && !p.did_last_movement_include_position
+    {
         p.sneaking_hidden = Aabb::new(-0.15, 0.0, -0.15, 0.15, 0.0, 0.15);
     }
 
@@ -154,7 +177,11 @@ pub fn check(p: &mut Movement, cx: &mut Context<'_>, update: PositionUpdate) -> 
     collisions::for_each_colliding_block(world, stepping, |x, y, z, b| match b.kind {
         BlockKind::SlimeBlock => {
             let above = block_collision_height(world, x, y + 1, z);
-            let height = if above > 0.0 && above < 1.0 { 1.0 + above } else { 1.0 };
+            let height = if above > 0.0 && above < 1.0 {
+                1.0 + above
+            } else {
+                1.0
+            };
             if (f64::from(y) + height - last_y).abs() <= MOVEMENT_THRESHOLD {
                 flags.0 = true;
                 flags.1 = true;
@@ -205,7 +232,11 @@ pub fn check(p: &mut Movement, cx: &mut Context<'_>, update: PositionUpdate) -> 
         p.predicted = VectorData::new(Vec3::ZERO, vt::DEAD);
         p.client_velocity = Vec3::ZERO;
         skipped = Some("dead");
-    } else if p.game_mode == crate::player::GameMode::Spectator || p.is_flying || p.is_gliding || p.in_vehicle {
+    } else if p.game_mode == crate::player::GameMode::Spectator
+        || p.is_flying
+        || p.is_gliding
+        || p.in_vehicle
+    {
         // Grim does not predict flight, exempt elytra gliding is the default
         // here, and vehicles are not modelled: follow the client.
         p.predicted = VectorData::new(p.actual_movement, vt::SPECTATOR);
@@ -243,7 +274,12 @@ pub fn check(p: &mut Movement, cx: &mut Context<'_>, update: PositionUpdate) -> 
         KnockbackHandler::force_exempt(p);
     }
 
-    PredictionComplete { offset, checked, teleport: false, skipped }
+    PredictionComplete {
+        offset,
+        checked,
+        teleport: false,
+        skipped,
+    }
 }
 
 /// `SneakingEstimator.onPredictionComplete`: a player held back by a sneak
@@ -266,7 +302,10 @@ fn update_sneaking_estimator(p: &mut Movement) {
     let u = &p.uncertainty;
     let mut b = p.sneaking_hidden;
     for d in &p.last_possible {
-        if d.is_jump() == p.predicted.is_jump() && d.is_knockback() == p.predicted.is_knockback() && d.is_explosion() == p.predicted.is_explosion() {
+        if d.is_jump() == p.predicted.is_jump()
+            && d.is_knockback() == p.predicted.is_knockback()
+            && d.is_explosion() == p.predicted.is_explosion()
+        {
             if u.last_stuck_west.has_occurred_since(0) || u.last_stuck_north.has_occurred_since(0) {
                 b.min_x = b.min_x.min(d.vector.x);
                 b.min_z = b.min_z.min(d.vector.z);
@@ -309,9 +348,11 @@ pub fn finish(p: &mut Movement, offset: f64, checked: bool) {
     p.was_swimming = p.is_swimming;
     p.was_sneaking = p.is_sneaking;
     p.uncertainty.last_movement_was_003 = p.skipped_tick_in_actual_movement;
-    p.uncertainty.last_movement_was_unknown_003_reset = p.could_skip_tick && p.predicted.is_knockback();
+    p.uncertainty.last_movement_was_unknown_003_reset =
+        p.could_skip_tick && p.predicted.is_knockback();
     p.could_skip_tick = false;
-    p.uncertainty.was_003_vertically = (p.uncertainty.last_movement_was_003 && controls_vertical_movement(p))
+    p.uncertainty.was_003_vertically = (p.uncertainty.last_movement_was_003
+        && controls_vertical_movement(p))
         || !p.point_three.can_predict_next_vertical_movement()
         || !p.point_three.was_always_certain;
     p.uncertainty.last_packet_was_ground_packet = p.uncertainty.on_ground_uncertain;
@@ -346,7 +387,10 @@ fn block_collision_height(world: &dyn BlockView, x: i32, y: i32, z: i32) -> f64 
     }
     let mut boxes = Vec::new();
     world.block_collision_boxes(x, y, z, &mut boxes);
-    boxes.iter().map(|b| b.max_y - f64::from(y)).fold(0.0, f64::max)
+    boxes
+        .iter()
+        .map(|b| b.max_y - f64::from(y))
+        .fold(0.0, f64::max)
 }
 
 /// `MovementCheckRunner.handleTeleport`.
@@ -380,7 +424,10 @@ pub fn handle_teleport(p: &mut Movement, cx: &mut Context<'_>, update: PositionU
 
 /// `UncertaintyHandler.reduceOffset`.
 fn reduce_offset(p: &Movement, mut offset: f64) -> f64 {
-    if p.uncertainty.last_hard_colliding_entity.has_occurred_since(3) {
+    if p.uncertainty
+        .last_hard_colliding_entity
+        .has_occurred_since(3)
+    {
         offset -= 1.2;
     }
     if p.uncertainty.influenced_by_bouncy_block() {
@@ -393,7 +440,9 @@ fn reduce_offset(p: &Movement, mut offset: f64) -> f64 {
 // PlayerBaseTick
 
 fn can_enter_pose(p: &Movement, world: &dyn BlockView, pose: Pose, x: f64, y: f64, z: f64) -> bool {
-    let bb = p.box_at(x, y, z, pose.width(), pose.height()).inflate(-1.0e-7);
+    let bb = p
+        .box_at(x, y, z, pose.width(), pose.height())
+        .inflate(-1.0e-7);
     collisions::is_empty(world, bb)
 }
 
@@ -426,8 +475,11 @@ fn do_base_tick(p: &mut Movement, world: &dyn BlockView) {
     p.is_slow_movement = (!p.was_flying
         && !p.is_swimming
         && can_enter_pose(p, world, Pose::Crouching, p.last_x, p.last_y, p.last_z)
-        && (p.was_sneaking || !p.in_bed && !can_enter_pose(p, world, Pose::Standing, p.last_x, p.last_y, p.last_z)))
-        || ((p.pose == Pose::Swimming || (!p.is_gliding && p.pose == Pose::FallFlying)) && !p.was_touching_water);
+        && (p.was_sneaking
+            || !p.in_bed
+                && !can_enter_pose(p, world, Pose::Standing, p.last_x, p.last_y, p.last_z)))
+        || ((p.pose == Pose::Swimming || (!p.is_gliding && p.pose == Pose::FallFlying))
+            && !p.was_touching_water);
 
     let w = p.bounding_box.width_x();
     let d = p.bounding_box.width_z();
@@ -492,8 +544,10 @@ fn update_swimming(p: &mut Movement, world: &dyn BlockView) {
     } else if p.is_swimming {
         p.is_swimming = p.last_sprinting && p.was_touching_water;
     } else {
-        let feet_in_water = world.water_height(floor(p.last_x), floor(p.last_y), floor(p.last_z)) > 0.0;
-        p.is_swimming = p.last_sprinting && p.was_eye_in_water && p.was_touching_water && feet_in_water;
+        let feet_in_water =
+            world.water_height(floor(p.last_x), floor(p.last_y), floor(p.last_z)) > 0.0;
+        p.is_swimming =
+            p.last_sprinting && p.was_eye_in_water && p.was_touching_water && feet_in_water;
     }
 }
 
@@ -503,8 +557,15 @@ fn move_towards_closest_space(p: &mut Movement, world: &dyn BlockView, x: f64, z
     let block_x = x.floor() as i32;
     let block_z = z.floor() as i32;
     let suffocates = |p: &Movement, bx: i32, bz: i32| {
-        let bb = Aabb::new(f64::from(bx), p.bounding_box.min_y, f64::from(bz), f64::from(bx) + 1.0, p.bounding_box.max_y, f64::from(bz) + 1.0)
-            .inflate(-1.0e-7);
+        let bb = Aabb::new(
+            f64::from(bx),
+            p.bounding_box.min_y,
+            f64::from(bz),
+            f64::from(bx) + 1.0,
+            p.bounding_box.max_y,
+            f64::from(bz) + 1.0,
+        )
+        .inflate(-1.0e-7);
         collisions::suffocates_at(world, bb)
     };
     if suffocates(p, block_x, block_z) {
@@ -560,7 +621,11 @@ pub fn update_player_pose(p: &mut Movement, world: &dyn BlockView) {
             Pose::Standing
         };
         if !p.in_vehicle && !can_enter_pose(p, world, pose, p.x, p.y, p.z) {
-            pose = if can_enter_pose(p, world, Pose::Crouching, p.x, p.y, p.z) { Pose::Crouching } else { Pose::Swimming };
+            pose = if can_enter_pose(p, world, Pose::Crouching, p.x, p.y, p.z) {
+                Pose::Crouching
+            } else {
+                Pose::Swimming
+            };
         }
         p.pose = pose;
         p.bounding_box = p.pose_box_at(p.x, p.y, p.z);
@@ -603,10 +668,25 @@ fn living_entity_travel(p: &mut Movement, cx: &mut Context<'_>, stuck_mask: u32)
             swim_friction = 0.96;
         }
         p.friction = swim_friction;
-        guess_best_movement(p, cx, swim_speed, EngineKind::Water { gravity, falling: is_falling, friction: swim_friction }, stuck_mask);
+        guess_best_movement(
+            p,
+            cx,
+            swim_speed,
+            EngineKind::Water {
+                gravity,
+                falling: is_falling,
+                friction: swim_friction,
+            },
+            stuck_mask,
+        );
         p.is_climbing = collisions::on_climbable(cx.world, p.x, p.y, p.z);
         if p.is_climbing {
-            let v = fluid_falling_adjusted(p, gravity, is_falling, p.client_velocity.with_y(0.2 * f64::from(0.8_f32)));
+            let v = fluid_falling_adjusted(
+                p,
+                gravity,
+                is_falling,
+                p.client_velocity.with_y(0.2 * f64::from(0.8_f32)),
+            );
             p.last_was_climbing = v.y;
         }
     } else if p.was_touching_lava && !p.is_flying {
@@ -624,7 +704,11 @@ fn living_entity_travel(p: &mut Movement, cx: &mut Context<'_>, stuck_mask: u32)
     } else {
         let block_friction = collisions::friction(p, cx.world, p.supporting, p.last_position());
         let air_drag = collisions::modified_air_drag(0.91, p);
-        p.friction = if p.last_on_ground { collisions::modified_friction(block_friction, p) * air_drag } else { air_drag };
+        p.friction = if p.last_on_ground {
+            collisions::modified_friction(block_friction, p) * air_drag
+        } else {
+            air_drag
+        };
         let speed = collisions::friction_influenced_speed(block_friction, p);
         guess_best_movement(p, cx, speed, EngineKind::Normal, stuck_mask);
     }
@@ -636,7 +720,12 @@ fn fluid_falling_adjusted(p: &Movement, gravity: f64, is_falling: bool, v: Vec3)
     if !p.has_gravity || p.is_sprinting {
         return v;
     }
-    let new_y = if is_falling && (v.y - 0.005).abs() >= 0.003 && (v.y - gravity / 16.0).abs() < 0.003 { -0.003 } else { v.y - gravity / 16.0 };
+    let new_y =
+        if is_falling && (v.y - 0.005).abs() >= 0.003 && (v.y - gravity / 16.0).abs() < 0.003 {
+            -0.003
+        } else {
+            v.y - gravity / 16.0
+        };
     v.with_y(new_y)
 }
 
@@ -649,7 +738,9 @@ fn apply_effects_from_blocks(p: &mut Movement, world: &dyn BlockView) {
     }
     p.last_stuck_speed = p.stuck_speed;
     p.stuck_speed = None;
-    let start = p.pose_box_at(p.last_x, p.last_y, p.last_z).inflate(-f64::from(1.0e-5_f32));
+    let start = p
+        .pose_box_at(p.last_x, p.last_y, p.last_z)
+        .inflate(-f64::from(1.0e-5_f32));
     let end = p.pose_box_at(p.x, p.y, p.z).inflate(-f64::from(1.0e-5_f32));
     let area = start.union(end);
     let (px, py, pz) = (floor(p.x), floor(p.y), floor(p.z));
@@ -659,9 +750,18 @@ fn apply_effects_from_blocks(p: &mut Movement, world: &dyn BlockView) {
     collisions::for_each_block(world, area, |x, y, z, b| match b.kind {
         BlockKind::Cobweb => stuck = Some(collisions::stuck_speed_of(1)),
         BlockKind::SweetBerryBush => stuck = Some(collisions::stuck_speed_of(4)),
-        BlockKind::PowderSnow if x == px && y == py && z == pz => stuck = Some(collisions::stuck_speed_of(8)),
+        BlockKind::PowderSnow if x == px && y == py && z == pz => {
+            stuck = Some(collisions::stuck_speed_of(8))
+        }
         BlockKind::BubbleColumn => {
-            let cell = Aabb::new(f64::from(x), f64::from(y), f64::from(z), f64::from(x + 1), f64::from(y + 1), f64::from(z + 1));
+            let cell = Aabb::new(
+                f64::from(x),
+                f64::from(y),
+                f64::from(z),
+                f64::from(x + 1),
+                f64::from(y + 1),
+                f64::from(z + 1),
+            );
             if end.intersects(&cell) {
                 let above_air = world.block(x, y + 1, z).air;
                 velocity.y = match (above_air, b.drag) {
@@ -714,13 +814,22 @@ fn tick_move(p: &mut Movement, cx: &mut Context<'_>, input_vel: Vec3, collide: V
         p.fall_distance -= collide.y;
     }
     if x_axis {
-        p.client_velocity.x = collisions::velocity_after_horizontal_collision(p, p.client_velocity.x);
+        p.client_velocity.x =
+            collisions::velocity_after_horizontal_collision(p, p.client_velocity.x);
     }
     if z_axis {
-        p.client_velocity.z = collisions::velocity_after_horizontal_collision(p, p.client_velocity.z);
+        p.client_velocity.z =
+            collisions::velocity_after_horizontal_collision(p, p.client_velocity.z);
     }
 
-    p.supporting = collisions::find_main_supporting_block(p, cx.world, p.supporting, collide, p.bounding_box, p.on_ground);
+    p.supporting = collisions::find_main_supporting_block(
+        p,
+        cx.world,
+        p.supporting,
+        collide,
+        p.bounding_box,
+        p.on_ground,
+    );
     let on_block = collisions::on_block(p, cx.world, p.supporting, p.position());
 
     if input_vel.y != collide.y {
@@ -734,11 +843,21 @@ fn tick_move(p: &mut Movement, cx: &mut Context<'_>, input_vel: Vec3, collide: V
     }
 
     let mut collide = collide;
-    if collide.length_squared() <= 1e-7 && input_vel.length_squared() - collide.length_squared() >= 1e-7 {
+    if collide.length_squared() <= 1e-7
+        && input_vel.length_squared() - collide.length_squared() >= 1e-7
+    {
         collide = Vec3::ZERO;
     }
-    p.predicted = VectorData { vector: collide, ..p.predicted };
-    let f = f64::from(collisions::block_speed_factor(p, cx.world, p.supporting, p.position()));
+    p.predicted = VectorData {
+        vector: collide,
+        ..p.predicted
+    };
+    let f = f64::from(collisions::block_speed_factor(
+        p,
+        cx.world,
+        p.supporting,
+        p.position(),
+    ));
     p.client_velocity = p.client_velocity.mul(f, 1.0, f);
 }
 
@@ -752,19 +871,34 @@ fn apply_block_bounce(p: &mut Movement, restitution: f32, movement: Vec3) {
         return;
     }
     let restitution = f64::from(restitution).max(f64::from(collisions::entity_bounciness(p)));
-    p.client_velocity.y = collisions::velocity_after_vertical_collision(p, current_y, movement.y, restitution);
+    p.client_velocity.y =
+        collisions::velocity_after_vertical_collision(p, current_y, movement.y, restitution);
 }
 
 // ---------------------------------------------------------------------------
 // PredictionEngine
 
-fn guess_best_movement(p: &mut Movement, cx: &mut Context<'_>, speed: f32, kind: EngineKind, stuck_mask: u32) {
+fn guess_best_movement(
+    p: &mut Movement,
+    cx: &mut Context<'_>,
+    speed: f32,
+    kind: EngineKind,
+    stuck_mask: u32,
+) {
     let init = fetch_possible_start_tick_vectors(p, cx, kind);
 
     if p.uncertainty.influenced_by_bouncy_block() {
         for data in &init {
-            let to_zero = handle_starting_velocity_uncertainty(p, cx, data, Vec3::new(0.0, -1_000_000_000.0, 0.0));
-            p.uncertainty.next_tick_slime_uncertainty = to_zero.y.abs().max(p.uncertainty.next_tick_slime_uncertainty);
+            let to_zero = handle_starting_velocity_uncertainty(
+                p,
+                cx,
+                data,
+                Vec3::new(0.0, -1_000_000_000.0, 0.0),
+            );
+            p.uncertainty.next_tick_slime_uncertainty = to_zero
+                .y
+                .abs()
+                .max(p.uncertainty.next_tick_slime_uncertainty);
         }
     }
 
@@ -788,7 +922,10 @@ fn possible_velocities(p: &Movement, cx: &Context<'_>, with_knockback: bool) -> 
     let mut set = Vec::with_capacity(6);
     if with_knockback {
         if let Some(kb) = p.first_bread_kb {
-            set.push(VectorData::new(kb.vector, vt::KNOCKBACK | vt::FIRST_BREAD_KB));
+            set.push(VectorData::new(
+                kb.vector,
+                vt::KNOCKBACK | vt::FIRST_BREAD_KB,
+            ));
         }
         if let Some(kb) = p.likely_kb {
             set.push(VectorData::new(kb.vector, vt::KNOCKBACK));
@@ -796,21 +933,40 @@ fn possible_velocities(p: &Movement, cx: &Context<'_>, with_knockback: bool) -> 
     }
     set.push(VectorData::new(p.client_velocity, vt::NORMAL));
     if p.can_swim_hop && !p.on_ground {
-        set.push(VectorData::new(p.client_velocity.with_y(0.30000001192092896), vt::SWIM_HOP));
+        set.push(VectorData::new(
+            p.client_velocity.with_y(0.30000001192092896),
+            vt::SWIM_HOP,
+        ));
     }
     if p.last_was_climbing != 0.0 {
-        set.push(VectorData::new(p.client_velocity.with_y(p.last_was_climbing + p.base_tick_addition.y), vt::CLIMBABLE));
+        set.push(VectorData::new(
+            p.client_velocity
+                .with_y(p.last_was_climbing + p.base_tick_addition.y),
+            vt::CLIMBABLE,
+        ));
     }
     let _ = cx;
     set
 }
 
-fn fetch_possible_start_tick_vectors(p: &mut Movement, cx: &mut Context<'_>, kind: EngineKind) -> Vec<VectorData> {
-    if let EngineKind::Water { gravity, falling, .. } = kind
+fn fetch_possible_start_tick_vectors(
+    p: &mut Movement,
+    cx: &mut Context<'_>,
+    kind: EngineKind,
+) -> Vec<VectorData> {
+    if let EngineKind::Water {
+        gravity, falling, ..
+    } = kind
         && p.last_was_climbing == 0.0
         && p.point_three.is_near_climbable
     {
-        p.last_was_climbing = fluid_falling_adjusted(p, gravity, falling, p.client_velocity.with_y(0.2 * f64::from(0.8_f32))).y;
+        p.last_was_climbing = fluid_falling_adjusted(
+            p,
+            gravity,
+            falling,
+            p.client_velocity.with_y(0.2 * f64::from(0.8_f32)),
+        )
+        .y;
     }
 
     let mut v = possible_velocities(p, cx, true);
@@ -825,7 +981,10 @@ fn fetch_possible_start_tick_vectors(p: &mut Movement, cx: &mut Context<'_>, kin
         }
         if d.is_knockback() && p.base_tick_water_pushing.length_squared() != 0.0 {
             let mut push = p.base_tick_water_pushing;
-            if d.vector.x.abs() < 0.003 && d.vector.z.abs() < 0.003 && push.length() < 0.0045000000000000005 {
+            if d.vector.x.abs() < 0.003
+                && d.vector.z.abs() < 0.003
+                && push.length() < 0.0045000000000000005
+            {
                 push = push.normalize().scale(0.0045000000000000005);
             }
             d.vector = d.vector.add(push);
@@ -870,7 +1029,10 @@ fn add_explosion(p: &Movement, v: &mut Vec<VectorData>) {
             v.push(d.modified(d.vector.add(e.vector), vt::EXPLOSION));
         }
         if let Some(e) = p.first_bread_explosion {
-            v.push(d.modified(d.vector.add(e.vector), vt::EXPLOSION | vt::FIRST_BREAD_EXPLOSION));
+            v.push(d.modified(
+                d.vector.add(e.vector),
+                vt::EXPLOSION | vt::FIRST_BREAD_EXPLOSION,
+            ));
         }
     }
 }
@@ -937,7 +1099,11 @@ fn jump_from_ground(p: &Movement, world: &dyn BlockView, v: &mut Vec3) {
 /// `JumpPower.getJumpPower`: the jump strength times the honey factor.
 fn jump_power(p: &Movement, world: &dyn BlockView) -> f32 {
     let strength = p.attr(Attr::JumpStrength) as f32;
-    let factor = if collisions::on_honey_block(p, world, p.supporting, p.last_position()) { 0.5 } else { 1.0 };
+    let factor = if collisions::on_honey_block(p, world, p.supporting, p.last_position()) {
+        0.5
+    } else {
+        1.0
+    };
     strength * factor
 }
 
@@ -953,7 +1119,9 @@ fn add_jumps(p: &Movement, cx: &Context<'_>, v: &mut Vec<VectorData>, kind: Engi
                 let mut jump = d.vector;
                 if !p.is_flying {
                     let boost = p.effects.level(Effect::JumpBoost);
-                    if ((boost.is_none() || boost.is_some_and(|b| b >= 0)) && p.on_ground) || !p.last_on_ground {
+                    if ((boost.is_none() || boost.is_some_and(|b| b >= 0)) && p.on_ground)
+                        || !p.last_on_ground
+                    {
                         return;
                     }
                     jump_from_ground(p, cx.world, &mut jump);
@@ -964,14 +1132,24 @@ fn add_jumps(p: &Movement, cx: &Context<'_>, v: &mut Vec<VectorData>, kind: Engi
             }
         }
         EngineKind::Water { .. } | EngineKind::Lava => {
-            let fluid_height = if matches!(kind, EngineKind::Lava) { p.lava_height } else { p.water_height };
+            let fluid_height = if matches!(kind, EngineKind::Lava) {
+                p.lava_height
+            } else {
+                p.water_height
+            };
             let base = v.clone();
             for d in base {
                 if p.could_skip_tick && d.is_zero_point_zero_three() {
-                    let y = p.actual_movement.y.clamp(d.vector.y, d.vector.y + f64::from(0.05_f32));
+                    let y = p
+                        .actual_movement
+                        .y
+                        .clamp(d.vector.y, d.vector.y + f64::from(0.05_f32));
                     v.push(d.modified(d.vector.with_y(y), vt::JUMP));
                 } else {
-                    v.push(d.modified(d.vector.add(Vec3::new(0.0, f64::from(0.04_f32), 0.0)), vt::JUMP));
+                    v.push(d.modified(
+                        d.vector.add(Vec3::new(0.0, f64::from(0.04_f32), 0.0)),
+                        vt::JUMP,
+                    ));
                 }
                 if fluid_height <= 0.4 && p.last_on_ground && !p.on_ground {
                     let mut with_jump = d.vector;
@@ -992,7 +1170,14 @@ fn transform_swimming_vectors(p: &Movement, base: Vec<VectorData>) -> Vec<Vector
         let scalar = if look_y < -0.2 { 0.085 } else { 0.06 };
         let mut out = Vec::with_capacity(base.len() * 2);
         for d in base {
-            out.push(d.modified(Vec3::new(d.vector.x, d.vector.y + (look_y - d.vector.y) * scalar, d.vector.z), vt::SWIMMING_SPACE));
+            out.push(d.modified(
+                Vec3::new(
+                    d.vector.x,
+                    d.vector.y + (look_y - d.vector.y) * scalar,
+                    d.vector.z,
+                ),
+                vt::SWIMMING_SPACE,
+            ));
             out.push(d.modified(d.vector, vt::SURFACE_SWIMMING));
         }
         return out;
@@ -1004,7 +1189,11 @@ fn transform_swimming_vectors(p: &Movement, base: Vec<VectorData>) -> Vec<Vector
 fn transform_input(p: &Movement, sideways: i32, forward: i32) -> Vec3 {
     let (sx, fz) = (sideways as f32, forward as f32);
     let len = (sx * sx + fz * fz).sqrt();
-    let (mut x, mut z) = if len < 1.0e-4 { (0.0, 0.0) } else { (sx / len, fz / len) };
+    let (mut x, mut z) = if len < 1.0e-4 {
+        (0.0, 0.0)
+    } else {
+        (sx / len, fz / len)
+    };
     if x * x + z * z == 0.0 {
         return Vec3::ZERO;
     }
@@ -1063,7 +1252,14 @@ fn input_ranges(input: KnownInput, sprinting: bool, swimming: bool) -> (i32, i32
 
 /// `loopVectors` with the client's known inputs: one movement input, and
 /// both states of the crouch slowdown and of item use.
-fn apply_inputs(p: &mut Movement, cx: &Context<'_>, init: &[VectorData], speed: f32, kind: EngineKind, stuck_mask: u32) -> Vec<VectorData> {
+fn apply_inputs(
+    p: &mut Movement,
+    cx: &Context<'_>,
+    init: &[VectorData],
+    speed: f32,
+    kind: EngineKind,
+    stuck_mask: u32,
+) -> Vec<VectorData> {
     let (forward, strafe) = input_ranges(p.known_input, p.is_sprinting, p.is_swimming);
     let mut out = Vec::with_capacity(init.len() * 4);
     for loop_slowed in 0..=1 {
@@ -1073,21 +1269,52 @@ fn apply_inputs(p: &mut Movement, cx: &Context<'_>, init: &[VectorData], speed: 
                     continue;
                 }
                 let input = transform_input(p, strafe, forward);
-                let mut result = d.modified(d.vector.add(movement_from_input(input, speed, p.yaw)), vt::NORMAL);
+                let mut result = d.modified(
+                    d.vector.add(movement_from_input(input, speed, p.yaw)),
+                    vt::NORMAL,
+                );
                 result.input = Some(input);
                 if p.uncertainty.should_simulate_stuck_speed {
                     if stuck_mask == 0 {
-                        out.push(stuck_result(p, cx, result, None, loop_using_item == 1, kind));
+                        out.push(stuck_result(
+                            p,
+                            cx,
+                            result,
+                            None,
+                            loop_using_item == 1,
+                            kind,
+                        ));
                     }
-                    out.push(stuck_result(p, cx, result, p.stuck_speed, loop_using_item == 1, kind));
+                    out.push(stuck_result(
+                        p,
+                        cx,
+                        result,
+                        p.stuck_speed,
+                        loop_using_item == 1,
+                        kind,
+                    ));
                     for bit in [1u32, 2, 4, 8] {
                         let m = collisions::stuck_speed_of(bit);
                         if stuck_mask & bit != 0 && p.stuck_speed != Some(m) {
-                            out.push(stuck_result(p, cx, result, Some(m), loop_using_item == 1, kind));
+                            out.push(stuck_result(
+                                p,
+                                cx,
+                                result,
+                                Some(m),
+                                loop_using_item == 1,
+                                kind,
+                            ));
                         }
                     }
                 } else {
-                    out.push(stuck_result(p, cx, result, p.stuck_speed, loop_using_item == 1, kind));
+                    out.push(stuck_result(
+                        p,
+                        cx,
+                        result,
+                        p.stuck_speed,
+                        loop_using_item == 1,
+                        kind,
+                    ));
                 }
             }
             p.slowed_by_using_item = !p.slowed_by_using_item;
@@ -1097,12 +1324,23 @@ fn apply_inputs(p: &mut Movement, cx: &Context<'_>, init: &[VectorData], speed: 
     out
 }
 
-fn stuck_result(p: &Movement, cx: &Context<'_>, mut result: VectorData, stuck: Option<Vec3>, flip_item: bool, kind: EngineKind) -> VectorData {
+fn stuck_result(
+    p: &Movement,
+    cx: &Context<'_>,
+    mut result: VectorData,
+    stuck: Option<Vec3>,
+    flip_item: bool,
+    kind: EngineKind,
+) -> VectorData {
     if let Some(m) = stuck {
         result = result.modified(result.vector.mul(m.x, m.y, m.z), vt::STUCK);
     }
     result.stuck = stuck;
-    let climbed = if kind == EngineKind::Normal { handle_on_climbable(p, cx, result.vector) } else { result.vector };
+    let climbed = if kind == EngineKind::Normal {
+        handle_on_climbable(p, cx, result.vector)
+    } else {
+        result.vector
+    };
     result = result.modified(climbed, vt::CLIMBABLE);
     if flip_item {
         result.types |= vt::FLIP_ITEM;
@@ -1116,7 +1354,11 @@ fn handle_on_climbable(p: &Movement, cx: &Context<'_>, mut v: Vec3) -> Vec3 {
         v.x = v.x.clamp(-f64::from(0.15_f32), f64::from(0.15_f32));
         v.z = v.z.clamp(-f64::from(0.15_f32), f64::from(0.15_f32));
         v.y = v.y.max(-f64::from(0.15_f32));
-        if v.y < 0.0 && cx.world.block_at(p.last_x, p.last_y, p.last_z).kind != BlockKind::Scaffolding && p.is_sneaking && !p.is_flying {
+        if v.y < 0.0
+            && cx.world.block_at(p.last_x, p.last_y, p.last_z).kind != BlockKind::Scaffolding
+            && p.is_sneaking
+            && !p.is_flying
+        {
             v.y = 0.0;
         }
     }
@@ -1136,7 +1378,12 @@ fn controls_vertical_movement(p: &Movement) -> bool {
 
 /// `PointThreeEstimator.determineCanSkipTick` for 1.21.2+ clients: only
 /// after a tick that sent no position.
-fn determine_can_skip_tick(p: &mut Movement, cx: &mut Context<'_>, speed: f32, init: &[VectorData]) -> bool {
+fn determine_can_skip_tick(
+    p: &mut Movement,
+    cx: &mut Context<'_>,
+    speed: f32,
+    init: &[VectorData],
+) -> bool {
     if p.did_last_movement_include_position && !p.uncertainty.is_stepping_on_slime {
         return false;
     }
@@ -1149,10 +1396,23 @@ fn determine_can_skip_tick(p: &mut Movement, cx: &mut Context<'_>, speed: f32, i
     let mut minimum = f64::MAX;
     for d in init {
         let to_zero = handle_starting_velocity_uncertainty(p, cx, d, Vec3::ZERO);
-        let r = collisions::collide(p, cx.world, to_zero.x, to_zero.y, to_zero.z, f64::from(i32::MIN), None, cx.disallow_stepping);
+        let r = collisions::collide(
+            p,
+            cx.world,
+            to_zero.x,
+            to_zero.y,
+            to_zero.z,
+            f64::from(i32::MIN),
+            None,
+            cx.disallow_stepping,
+        );
         let min_horiz = (r.x.hypot(r.z) - f64::from(speed)).max(0.0);
         let forced_no_003 = d.is_explosion() || d.is_knockback();
-        let vertical = if (!forced_no_003 && p.last_on_ground) || controls_vertical_movement(p) { 0.0 } else { r.y.abs() };
+        let vertical = if (!forced_no_003 && p.last_on_ground) || controls_vertical_movement(p) {
+            0.0
+        } else {
+            r.y.abs()
+        };
         let length = vertical.hypot(min_horiz);
         minimum = minimum.min(length);
         if minimum < MOVEMENT_THRESHOLD {
@@ -1173,10 +1433,18 @@ fn update_velocity_movement_skipping(p: &mut Movement, cx: &mut Context<'_>) {
         let minus_kb = possible_velocities(p, cx, false);
         p.could_skip_tick = determine_can_skip_tick(p, cx, speed, &minus_kb);
     }
-    let kb: Vec<VectorData> = [p.first_bread_kb, p.likely_kb].iter().flatten().map(|k| VectorData::new(k.vector, vt::KNOCKBACK)).collect();
+    let kb: Vec<VectorData> = [p.first_bread_kb, p.likely_kb]
+        .iter()
+        .flatten()
+        .map(|k| VectorData::new(k.vector, vt::KNOCKBACK))
+        .collect();
     let kb_003 = !kb.is_empty() && determine_can_skip_tick(p, cx, speed, &kb);
     cx.kb.point_three |= kb_003;
-    let ex: Vec<VectorData> = [p.first_bread_explosion, p.likely_explosion].iter().flatten().map(|k| VectorData::new(k.vector, vt::EXPLOSION)).collect();
+    let ex: Vec<VectorData> = [p.first_bread_explosion, p.likely_explosion]
+        .iter()
+        .flatten()
+        .map(|k| VectorData::new(k.vector, vt::EXPLOSION))
+        .collect();
     let ex_003 = !ex.is_empty() && determine_can_skip_tick(p, cx, speed, &ex);
     cx.explosion.point_three |= ex_003;
     if kb_003 || ex_003 {
@@ -1185,20 +1453,33 @@ fn update_velocity_movement_skipping(p: &mut Movement, cx: &mut Context<'_>) {
 }
 
 /// `addZeroPointThreeToPossibilities`.
-fn add_zero_point_three(p: &mut Movement, cx: &mut Context<'_>, speed: f32, kind: EngineKind, stuck_mask: u32, possible: &mut Vec<VectorData>) {
+fn add_zero_point_three(
+    p: &mut Movement,
+    cx: &mut Context<'_>,
+    speed: f32,
+    kind: EngineKind,
+    stuck_mask: u32,
+    possible: &mut Vec<VectorData>,
+) {
     let mut set = Vec::new();
     let mut base = Vec3::ZERO;
     if !controls_vertical_movement(p) {
         base.y = p.client_velocity.y;
     } else {
-        set.push(VectorData::new(Vec3::new(0.0, p.client_velocity.y, 0.0), vt::ZERO_POINT_ZERO_THREE));
+        set.push(VectorData::new(
+            Vec3::new(0.0, p.client_velocity.y, 0.0),
+            vt::ZERO_POINT_ZERO_THREE,
+        ));
     }
     set.push(VectorData::new(base, vt::ZERO_POINT_ZERO_THREE));
     if p.point_three.is_near_fluid
         && !collisions::is_empty(cx.world, p.bounding_box.expand(0.4, 0.0, 0.4))
         && !p.on_ground
     {
-        set.push(VectorData::new(Vec3::new(0.0, 0.3, 0.0), vt::ZERO_POINT_ZERO_THREE));
+        set.push(VectorData::new(
+            Vec3::new(0.0, 0.3, 0.0),
+            vt::ZERO_POINT_ZERO_THREE,
+        ));
     }
     if p.is_swimming {
         set = transform_swimming_vectors(p, set);
@@ -1241,7 +1522,12 @@ fn sort_key(p: &Movement, d: &VectorData) -> (i32, f64) {
     (score, d.vector.distance_squared(p.actual_movement))
 }
 
-fn do_predictions(p: &mut Movement, cx: &mut Context<'_>, possible: &mut [VectorData], speed: f32) -> Vec3 {
+fn do_predictions(
+    p: &mut Movement,
+    cx: &mut Context<'_>,
+    possible: &mut [VectorData],
+    speed: f32,
+) -> Vec3 {
     possible.sort_by(|a, b| {
         let (sa, da) = sort_key(p, a);
         let (sb, db) = sort_key(p, b);
@@ -1261,14 +1547,34 @@ fn do_predictions(p: &mut Movement, cx: &mut Context<'_>, possible: &mut [Vector
 
     for d in possible.iter() {
         let primary = handle_starting_velocity_uncertainty(p, cx, d, p.actual_movement);
-        let theoretical_box = Aabb::new(0.0, primary.y.min(0.0), 0.0, primary.x, primary.y.max(0.6), primary.z).sorted();
-        let theoretical = cut_box_to_vector(p.actual_movement, theoretical_box.min(), theoretical_box.max());
-        if theoretical.distance_squared(p.actual_movement) > best_input && !d.is_knockback() && !d.is_explosion() {
+        let theoretical_box = Aabb::new(
+            0.0,
+            primary.y.min(0.0),
+            0.0,
+            primary.x,
+            primary.y.max(0.6),
+            primary.z,
+        )
+        .sorted();
+        let theoretical = cut_box_to_vector(
+            p.actual_movement,
+            theoretical_box.min(),
+            theoretical_box.max(),
+        );
+        if theoretical.distance_squared(p.actual_movement) > best_input
+            && !d.is_knockback()
+            && !d.is_explosion()
+        {
             continue;
         }
-        p.bounding_box = if d.is_zero_point_zero_three() { point_three_box } else { original_bb };
+        p.bounding_box = if d.is_zero_point_zero_three() {
+            point_three_box
+        } else {
+            original_bb
+        };
 
-        let (mut test_primary, mut output, mut real_primary) = seek_wall_collisions(p, cx, primary, original_client_vel, d);
+        let (mut test_primary, mut output, mut real_primary) =
+            seek_wall_collisions(p, cx, primary, original_client_vel, d);
         let mut accuracy = output.distance_squared(p.actual_movement);
         // Grim moves 0.03 candidates with a 0.6 x 0.6 box because the pose is
         // unknown after ticks without a position; the real pose is just as
@@ -1336,12 +1642,27 @@ fn do_predictions(p: &mut Movement, cx: &mut Context<'_>, possible: &mut [Vector
     before_collision
 }
 
-fn seek_wall_collisions(p: &mut Movement, cx: &mut Context<'_>, primary: Vec3, original_client_vel: Vec3, d: &VectorData) -> (Vec3, Vec3, Vec3) {
+fn seek_wall_collisions(
+    p: &mut Movement,
+    cx: &mut Context<'_>,
+    primary: Vec3,
+    original_client_vel: Vec3,
+    d: &VectorData,
+) -> (Vec3, Vec3, Vec3) {
     let x_add = primary.x.signum() * COLLISION_EPSILON * f64::from(u8::from(primary.x != 0.0));
     let y_add = if primary.y > 0.0 { 1.0 } else { -1.0 } * COLLISION_EPSILON;
     let z_add = primary.z.signum() * COLLISION_EPSILON * f64::from(u8::from(primary.z != 0.0));
     let mut test = Vec3::new(primary.x + x_add, primary.y + y_add, primary.z + z_add);
-    let mut out = collisions::collide(p, cx.world, test.x, test.y, test.z, original_client_vel.y, Some(d), cx.disallow_stepping);
+    let mut out = collisions::collide(
+        p,
+        cx.world,
+        test.x,
+        test.y,
+        test.z,
+        original_client_vel.y,
+        Some(d),
+        cx.disallow_stepping,
+    );
     if test.x == out.x {
         test.x -= x_add;
         out.x -= x_add;
@@ -1363,11 +1684,16 @@ fn offset_horizontal(p: &Movement, d: &VectorData) -> f64 {
     let new_vector_003 = p.could_skip_tick && d.is_knockback();
     let explicit_003 = d.is_zero_point_zero_three() || p.uncertainty.last_movement_was_003;
     let either = new_vector_003 || explicit_003;
-    let mut point_three = if new_vector_003 || p.uncertainty.last_movement_was_unknown_003_reset { t } else { 0.0 };
+    let mut point_three = if new_vector_003 || p.uncertainty.last_movement_was_unknown_003_reset {
+        t
+    } else {
+        0.0
+    };
     if explicit_003 {
         point_three = 0.91 * 0.6 * (t * 2.0) + t;
     }
-    if either && (p.uncertainty.influenced_by_bouncy_block() || p.uncertainty.is_stepping_on_honey) {
+    if either && (p.uncertainty.influenced_by_bouncy_block() || p.uncertainty.is_stepping_on_honey)
+    {
         point_three = 0.91 * 0.8 * (t * 2.0) + t;
     }
     if either && p.uncertainty.is_stepping_on_ice {
@@ -1391,7 +1717,9 @@ fn offset_vertical(p: &Movement, d: &VectorData) -> f64 {
     if u.was_stepping_on_bouncy && (p.was_touching_water || p.was_touching_lava) {
         return 0.06;
     }
-    if u.last_flying_ticks.has_occurred_since(5) && d.vector.y.abs() < 4.5 * f64::from(p.fly_speed) - 0.25 {
+    if u.last_flying_ticks.has_occurred_since(5)
+        && d.vector.y.abs() < 4.5 * f64::from(p.fly_speed) - 0.25
+    {
         return 0.06;
     }
     let t = MOVEMENT_THRESHOLD;
@@ -1412,7 +1740,11 @@ fn offset_vertical(p: &Movement, d: &VectorData) -> f64 {
 
 /// `PointThreeEstimator.getAdditionalVerticalUncertainty`.
 fn additional_vertical_uncertainty(p: &mut Movement, d: &VectorData) -> f64 {
-    let fluid_addition = if d.is_zero_point_zero_three() { 0.014 } else { 0.0 };
+    let fluid_addition = if d.is_zero_point_zero_three() {
+        0.014
+    } else {
+        0.0
+    };
     if p.point_three.head_hitter {
         p.point_three.was_always_certain = false;
         return -d.vector.y.max(0.0) - 0.1 - fluid_addition;
@@ -1443,7 +1775,8 @@ fn additional_vertical_uncertainty(p: &mut Movement, d: &VectorData) -> f64 {
         }
         y_vel *= f64::from(collisions::modified_air_drag(0.98, p));
         guard += 1;
-        if y_vel == 0.0 || guard > 256 || (max_y_traveled + d.vector.y).abs() >= MOVEMENT_THRESHOLD {
+        if y_vel == 0.0 || guard > 256 || (max_y_traveled + d.vector.y).abs() >= MOVEMENT_THRESHOLD
+        {
             break;
         }
     }
@@ -1456,16 +1789,27 @@ fn additional_vertical_uncertainty(p: &mut Movement, d: &VectorData) -> f64 {
 /// `PredictionEngine.handleStartingVelocityUncertainty`: grows the vector
 /// into a box of what the client could have had, and returns the point of
 /// it closest to `target`.
-fn handle_starting_velocity_uncertainty(p: &mut Movement, cx: &mut Context<'_>, d: &VectorData, target: Vec3) -> Vec3 {
+fn handle_starting_velocity_uncertainty(
+    p: &mut Movement,
+    cx: &mut Context<'_>,
+    d: &VectorData,
+    target: Vec3,
+) -> Vec3 {
     let avg_colliding = f64::from(p.uncertainty.max_colliding_entities());
     let mut add_h = offset_horizontal(p, d) + p.uncertainty.last_horizontal_offset;
     let add_v = offset_vertical(p, d) + p.uncertainty.last_vertical_offset;
     let mut bonus_y = 0.0;
-    if p.uncertainty.last_flying_status_change.has_occurred_since(4) {
+    if p.uncertainty
+        .last_flying_status_change
+        .has_occurred_since(4)
+    {
         add_h += 0.3;
         bonus_y += 0.3;
     }
-    if p.uncertainty.last_hard_colliding_entity.has_occurred_since(2) {
+    if p.uncertainty
+        .last_hard_colliding_entity
+        .has_occurred_since(2)
+    {
         add_h += 0.1;
         bonus_y += 0.1;
     }
@@ -1479,9 +1823,17 @@ fn handle_starting_velocity_uncertainty(p: &mut Movement, cx: &mut Context<'_>, 
     let mut min_v = d.vector.add(min.sub(uncertainty));
     let mut max_v = d.vector.add(max.add(uncertainty));
 
-    if p.uncertainty.on_ground_uncertain && d.vector.y < 0.0 && !p.uncertainty.influenced_by_bouncy_block() {
+    if p.uncertainty.on_ground_uncertain
+        && d.vector.y < 0.0
+        && !p.uncertainty.influenced_by_bouncy_block()
+    {
         let movement_y = min_v.y.max(-MOVEMENT_THRESHOLD);
-        let bounce_y = collisions::velocity_after_vertical_collision(p, min_v.y, movement_y, f64::from(collisions::entity_bounciness(p)));
+        let bounce_y = collisions::velocity_after_vertical_collision(
+            p,
+            min_v.y,
+            movement_y,
+            f64::from(collisions::entity_bounciness(p)),
+        );
         if bounce_y < 0.0 {
             min_v.y = bounce_y;
         } else {
@@ -1495,7 +1847,9 @@ fn handle_starting_velocity_uncertainty(p: &mut Movement, cx: &mut Context<'_>, 
     } else {
         min_v.y += gravity_offset;
     }
-    if (p.point_three.near_bubble_column || p.point_three.near_vertical_flow) && d.is_zero_point_zero_three() {
+    if (p.point_three.near_bubble_column || p.point_three.near_vertical_flow)
+        && d.is_zero_point_zero_three()
+    {
         min_v.y -= 0.014 * 2.0;
     }
     if p.point_three.near_bubble_column && d.is_zero_point_zero_three() {
@@ -1505,7 +1859,10 @@ fn handle_starting_velocity_uncertainty(p: &mut Movement, cx: &mut Context<'_>, 
     if !p.point_three.can_predict_next_vertical_movement() {
         min_v.y -= p.attr(Attr::Gravity);
     }
-    if p.uncertainty.influenced_by_bouncy_block() && p.uncertainty.this_tick_slime_uncertainty != 0.0 && !d.is_jump() {
+    if p.uncertainty.influenced_by_bouncy_block()
+        && p.uncertainty.this_tick_slime_uncertainty != 0.0
+        && !d.is_jump()
+    {
         if p.uncertainty.this_tick_slime_uncertainty > max_v.y {
             max_v.y = p.uncertainty.this_tick_slime_uncertainty;
         }
@@ -1535,7 +1892,10 @@ fn handle_starting_velocity_uncertainty(p: &mut Movement, cx: &mut Context<'_>, 
     }
     if d.vector.y > 0.0
         && d.is_zero_point_zero_three()
-        && !collisions::is_empty(cx.world, p.box_at(p.last_x, d.vector.y + p.last_y + 0.6, p.last_z, 0.6, 1.26))
+        && !collisions::is_empty(
+            cx.world,
+            p.box_at(p.last_x, d.vector.y + p.last_y + 0.6, p.last_z, 0.6, 1.26),
+        )
     {
         b = b.include_point(0.0, 0.0, 0.0);
     }
@@ -1581,7 +1941,11 @@ fn end_of_tick(p: &mut Movement, world: &dyn BlockView, kind: EngineKind) {
             }
             static_vector_end_of_tick_normal(p);
         }
-        EngineKind::Water { gravity, falling, friction } => {
+        EngineKind::Water {
+            gravity,
+            falling,
+            friction,
+        } => {
             let f = f64::from(friction);
             let v = p.client_velocity.mul(f, f64::from(0.8_f32), f);
             p.client_velocity = fluid_falling_adjusted(p, gravity, falling, v);
@@ -1602,20 +1966,34 @@ fn can_swim_hop(p: &mut Movement, world: &dyn BlockView) -> bool {
     let to_ground = collisions::collide_simple(p, world, 0.0, -t, 0.0).y + COLLISION_EPSILON;
     p.bounding_box = old_bb;
     let new_box = p.box_at(p.x, p.y, p.z, 0.6, 1.8);
-    p.uncertainty.last_hard_colliding_entity.has_occurred_since(3)
+    p.uncertainty
+        .last_hard_colliding_entity
+        .has_occurred_since(3)
         || !collisions::is_empty(
             world,
-            new_box.expand_towards(p.client_velocity.x, -to_ground, p.client_velocity.z).expand(0.5, 0.03, 0.5),
+            new_box
+                .expand_towards(p.client_velocity.x, -to_ground, p.client_velocity.z)
+                .expand(0.5, 0.03, 0.5),
         )
 }
 
 /// `PointThreeEstimator.endOfTickTick`.
 fn end_of_tick_point_three(p: &mut Movement, world: &dyn BlockView) {
     let t = MOVEMENT_THRESHOLD;
-    let point_three_box = p.box_at(p.x, p.y - t, p.z, 0.6 + (t * 2.0) as f32, 1.8 + (t * 2.0) as f32);
+    let point_three_box = p.box_at(
+        p.x,
+        p.y - t,
+        p.z,
+        0.6 + (t * 2.0) as f32,
+        1.8 + (t * 2.0) as f32,
+    );
     let old_bb = p.bounding_box;
     let mut head_hitter = false;
-    let sizes: &[f32] = if p.skipped_tick_in_actual_movement { &[0.6, 1.5, 1.8] } else { &[0.0] };
+    let sizes: &[f32] = if p.skipped_tick_in_actual_movement {
+        &[0.6, 1.5, 1.8]
+    } else {
+        &[0.0]
+    };
     for &s in sizes {
         let size = if s == 0.0 { p.pose.height() } else { s };
         p.bounding_box = p.box_at(p.x, p.y + f64::from(size - 0.01), p.z, 0.6, 0.01);
@@ -1624,7 +2002,8 @@ fn end_of_tick_point_three(p: &mut Movement, world: &dyn BlockView) {
     p.bounding_box = old_bb;
     p.point_three.head_hitter = head_hitter;
 
-    let (mut climbable, mut bubble, mut fluid_near, mut h_flow, mut v_flow) = (false, false, false, false, false);
+    let (mut climbable, mut bubble, mut fluid_near, mut h_flow, mut v_flow) =
+        (false, false, false, false, false);
     collisions::for_each_block(world, point_three_box, |x, y, z, b| {
         if b.climbable {
             climbable = true;
@@ -1663,8 +2042,19 @@ mod tests {
     use super::*;
     use crate::world::{BlockFacts, TestWorld};
 
-    fn ctx<'a>(w: &'a TestWorld, kb: &'a mut KnockbackHandler, ex: &'a mut ExplosionHandler) -> Context<'a> {
-        Context { world: w, kb, explosion: ex, kb_cfg: VelocityConfig::default(), explosion_threshold: 1e-5, disallow_stepping: false }
+    fn ctx<'a>(
+        w: &'a TestWorld,
+        kb: &'a mut KnockbackHandler,
+        ex: &'a mut ExplosionHandler,
+    ) -> Context<'a> {
+        Context {
+            world: w,
+            kb,
+            explosion: ex,
+            kb_cfg: VelocityConfig::default(),
+            explosion_threshold: 1e-5,
+            disallow_stepping: false,
+        }
     }
 
     #[test]
@@ -1678,7 +2068,16 @@ mod tests {
         p.last_on_ground = true;
         let (mut kb, mut ex) = (KnockbackHandler::default(), ExplosionHandler::default());
         let mut cx = ctx(&w, &mut kb, &mut ex);
-        let r = check(&mut p, &mut cx, PositionUpdate { to: Vec3::new(0.5, 64.0, 0.5), on_ground: true, is_teleport: false, teleport_velocity: None });
+        let r = check(
+            &mut p,
+            &mut cx,
+            PositionUpdate {
+                to: Vec3::new(0.5, 64.0, 0.5),
+                on_ground: true,
+                is_teleport: false,
+                teleport_velocity: None,
+            },
+        );
         assert!(r.checked);
         assert!(r.offset < 1e-9, "offset {}", r.offset);
     }
